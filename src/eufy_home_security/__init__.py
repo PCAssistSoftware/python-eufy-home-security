@@ -54,6 +54,7 @@ if TYPE_CHECKING:
         PushChanged,
         PushMessageType,
         SecurityEvent,
+        StationConfigChanged,
         StationsChanged,
         StationStateChanged,
         StorageChanged,
@@ -72,6 +73,7 @@ if TYPE_CHECKING:
         CommandRejectedError,
         CommandUnsupportedError,
         CommunicationError,
+        ConfigChangedError,
         DeviceBusyError,
         DeviceTimeoutError,
         EmptyResponseError,
@@ -82,6 +84,7 @@ if TYPE_CHECKING:
         LiveStreamLimitError,
         LoginChallengeError,
         LoginLimitedError,
+        ModeInUseError,
         ModelDataError,
         NoCachedSessionError,
         PresetSlotsFullError,
@@ -108,7 +111,7 @@ if TYPE_CHECKING:
     )
     from .inclusion import Reach, StationChoice
     from .install import InstallState
-    from .models import FrameCipher, GuardMode, ValueSource
+    from .models import GUARD_MODE_LABELS, FrameCipher, GuardMode, ValueSource
     from .network import HostSource, LanPath, PathWarning, suggest_local_ports
     from .p2p.broadcast import DEFAULT_QUEUE_CHUNKS, FrameStream, ResizePolicy, StreamBroadcast
     from .p2p.clip import CLIP_CONTENT_TYPE, ClipWriter, MediaClip
@@ -124,6 +127,14 @@ if TYPE_CHECKING:
     )
     from .p2p.storage_info import DiskInfo, EmmcInfo, StorageInfo, StorageMedium
     from .station import RemoteStation, SettingsCoverage, Station, StationState, SubDeviceState
+    from .station_config import (
+        CrossCameraConfig,
+        ModeDeviceAction,
+        ModeInfo,
+        ModeTableView,
+        StationConfig,
+        guard_mode_label,
+    )
     from .storage import (
         CACHE_LAYOUT_VERSION,
         JsonFileStore,
@@ -201,6 +212,7 @@ _EXPORTS: dict[str, str] = {
             "PushChanged",
             "PushMessageType",
             "SecurityEvent",
+            "StationConfigChanged",
             "StationStateChanged",
             "StorageChanged",
             "ZoomChanged",
@@ -221,6 +233,7 @@ _EXPORTS: dict[str, str] = {
             "CommandRejectedError",
             "CommandUnsupportedError",
             "CommunicationError",
+            "ConfigChangedError",
             "DeviceBusyError",
             "DeviceTimeoutError",
             "EmptyResponseError",
@@ -231,6 +244,7 @@ _EXPORTS: dict[str, str] = {
             "LiveStreamLimitError",
             "LoginChallengeError",
             "LoginLimitedError",
+            "ModeInUseError",
             "ModelDataError",
             "NoCachedSessionError",
             "PresetSlotsFullError",
@@ -262,7 +276,7 @@ _EXPORTS: dict[str, str] = {
     ),
     "InstallState": "install",
     **dict.fromkeys(("Reach", "StationChoice"), "inclusion"),
-    **dict.fromkeys(("FrameCipher", "GuardMode", "ValueSource"), "models"),
+    **dict.fromkeys(("GUARD_MODE_LABELS", "FrameCipher", "GuardMode", "ValueSource"), "models"),
     **dict.fromkeys(("HostSource", "LanPath", "PathWarning", "suggest_local_ports"), "network"),
     **dict.fromkeys(
         ("MediaKeyType", "Still", "StillFormat", "VideoCodec", "picture_codec"), "p2p.media"
@@ -285,6 +299,17 @@ _EXPORTS: dict[str, str] = {
     ),
     **dict.fromkeys(
         (
+            "CrossCameraConfig",
+            "ModeDeviceAction",
+            "ModeInfo",
+            "ModeTableView",
+            "StationConfig",
+            "guard_mode_label",
+        ),
+        "station_config",
+    ),
+    **dict.fromkeys(
+        (
             "CACHE_LAYOUT_VERSION",
             "JsonFileStore",
             "MemoryStore",
@@ -301,6 +326,7 @@ __all__ = [
     "CLIP_CONTENT_TYPE",
     "DEFAULT_QUEUE_CHUNKS",
     "DEFAULT_STATION_SESSIONS",
+    "GUARD_MODE_LABELS",
     "H264_CONTENT_TYPE",
     "HEVC_CONTENT_TYPE",
     "IMAGE_SOURCES",
@@ -342,8 +368,10 @@ __all__ = [
     "CommandRejectedError",
     "CommandUnsupportedError",
     "CommunicationError",
+    "ConfigChangedError",
     "ConnectionChanged",
     "CredentialsRefreshed",
+    "CrossCameraConfig",
     "DetectionType",
     "DeviceBusyError",
     "DeviceListSource",
@@ -381,6 +409,10 @@ __all__ = [
     "MediaClip",
     "MediaKeyType",
     "MemoryStore",
+    "ModeDeviceAction",
+    "ModeInUseError",
+    "ModeInfo",
+    "ModeTableView",
     "ModelDataError",
     "ModelStatus",
     "NoCachedSessionError",
@@ -417,6 +449,8 @@ __all__ = [
     "Station",
     "StationChoice",
     "StationClaims",
+    "StationConfig",
+    "StationConfigChanged",
     "StationRefreshStatus",
     "StationState",
     "StationStateChanged",
@@ -438,6 +472,7 @@ __all__ = [
     "__version__",
     "async_forget_account",
     "entity_unique_id",
+    "guard_mode_label",
     "picture_codec",
     "redact",
     "redact_serial",
