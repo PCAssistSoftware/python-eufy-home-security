@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         SettingSection,
         setting_section,
     )
-    from .devices.settings import SettingUnit
+    from .devices.settings import MODE_ACTION_ALARM_AFFECTING, MODE_ACTION_LABELS, SettingUnit
     from .devices.station_config_support import ModeTableStorage, StationFeature
     from .diagnostics import AccountReport
     from .events import (
@@ -129,6 +129,7 @@ if TYPE_CHECKING:
     from .p2p.encoder import SETTLE_STANDALONE, SETTLE_STATION
     from .p2p.media import MediaKeyType, Still, StillFormat, VideoCodec, picture_codec
     from .p2p.messages import SOUND_ALARM_SECONDS
+    from .p2p.mode_actions import MODE_DELAY_CHOICES
     from .p2p.pppp import LAN_DISCOVERY_TIMEOUT
     from .p2p.session import (
         DEFAULT_STATION_SESSIONS,
@@ -202,7 +203,9 @@ _EXPORTS: dict[str, str] = {
         ),
         "devices.sections",
     ),
-    "SettingUnit": "devices.settings",
+    **dict.fromkeys(
+        ("MODE_ACTION_ALARM_AFFECTING", "MODE_ACTION_LABELS", "SettingUnit"), "devices.settings"
+    ),
     **dict.fromkeys(("ModeTableStorage", "StationFeature"), "devices.station_config_support"),
     **dict.fromkeys(
         ("MAX_PRESET_SLOTS", "MAX_ZOOM", "MIN_ZOOM", "PanTilt", "PresetPosition"), "devices.recipes"
@@ -213,6 +216,7 @@ _EXPORTS: dict[str, str] = {
     **dict.fromkeys(("CLIP_CONTENT_TYPE", "ClipWriter", "MediaClip"), "p2p.clip"),
     **dict.fromkeys(("SETTLE_STANDALONE", "SETTLE_STATION"), "p2p.encoder"),
     "SOUND_ALARM_SECONDS": "p2p.messages",
+    "MODE_DELAY_CHOICES": "p2p.mode_actions",
     **dict.fromkeys(
         (
             "AccountMismatch",
@@ -364,6 +368,9 @@ __all__ = [
     "MIN_STATION_SESSIONS",
     "MIN_ZOOM",
     "MODES_SECTION",
+    "MODE_ACTION_ALARM_AFFECTING",
+    "MODE_ACTION_LABELS",
+    "MODE_DELAY_CHOICES",
     "OTHER_SECTION",
     "SETTING_SECTIONS",
     "SETTLE_STANDALONE",

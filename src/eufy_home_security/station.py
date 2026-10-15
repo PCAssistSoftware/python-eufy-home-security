@@ -84,6 +84,7 @@ from .devices.types import DeviceKind, DeviceModel, model_for_serial
 from .events import (
     RECORDING_SUFFIX,
     STILL_SUFFIX,
+    AlarmChanged,
     CameraBusyChanged,
     ConnectionChanged,
     DevicesChanged,
@@ -940,6 +941,8 @@ class Station:
         """The station entry's ``time_zone``."""
         self._shared_locks: dict[str, asyncio.Lock] = {}
         """:meth:`_shared_lock` per shared parameter group."""
+        self._alarm: AlarmChanged | None = None
+        """The last alarm transition (:attr:`last_alarm`)."""
         session.add_dump_listener(self._on_dump_complete)
         session.add_notify_listener(self._on_notify)
         session.subscribe(self._on_session_event)
@@ -997,7 +1000,9 @@ class Station:
         for device in self.devices:
             if device.device_sn == device_sn:
                 return device
-        raise UnsupportedError(f"{redact_serial(device_sn)} is not paired to {self._log_name}")
+        raise UnsupportedError(
+            f"{redact_serial(device_sn)} is not paired to {self._log_name}", device_sn=device_sn
+        )
 
     def settings_for(self, device_sn: str | None = None) -> tuple[Setting, ...]:
         """The settings of the station (``None``, or its own serial) or of a paired
@@ -1020,6 +1025,22 @@ class Station:
         if serial != self.serial:
             self.sub_device(serial)
         return self._settings_of(serial)
+
+    def has_setting(self, key: str, device_sn: str | None = None) -> bool | None:
+        """Whether ``key`` is a setting of the station (``None``, or its own serial) or of
+        the paired device ``device_sn`` in this release: in its :meth:`settings_for`
+        list, with the per-mode settings of a paired device and without the settings the
+        eufy app offers a paired device only without a parent.
+
+        None when that list is empty, so unknown: a model without a settings file whose
+        thing description the client's model scan has not listed (yet). Keep a stored
+        entity then; on False, remove it (the release dropped or renamed the key).
+        Sync; raises ``UnsupportedError`` as :meth:`settings_for`.
+        """
+        settings = self.settings_for(device_sn)
+        if not settings:
+            return None
+        return any(setting.key == key for setting in settings)
 
     def has_battery(self, device_sn: str | None = None) -> bool | None:
         """Whether the camera or doorbell ``device_sn`` (the station itself for ``None``)
@@ -1188,7 +1209,9 @@ class Station:
             return own
         channel = self.sub_device(device_sn).channel
         if channel is None:
-            raise UnsupportedError(f"the cloud reports no channel for {redact_serial(device_sn)}")
+            raise UnsupportedError(
+                f"the cloud reports no channel for {redact_serial(device_sn)}", device_sn=device_sn
+            )
         return channel
 
     # ── lifecycle and events ─────────────────────────────────────────────────
@@ -1265,6 +1288,8 @@ class Station:
         self._bus.emit(ZoomChanged(station_sn=self.serial, device_sn=device_sn, zoom=zoom))
 
     def _on_session_event(self, event: Event) -> None:
+        if isinstance(event, AlarmChanged):
+            self.note_alarm(event)
         # A camera that loses its link has gone idle, and an idle camera returns to 1x.
         if isinstance(event, ConnectionChanged) and not event.connected:
             for device_sn in list(self._zooms):
@@ -1291,6 +1316,32 @@ class Station:
     def connected(self) -> bool:
         """Whether the last :class:`~.events.ConnectionChanged` said connected and still holds."""
         return self.session.announced
+
+    @property
+    def alarming(self) -> bool:
+        """Whether the station's alarm is sounding, as the last
+        :class:`~.events.AlarmChanged` for it said; False before any. Under
+        :class:`~.client.EufySecurity` it follows the account's alarm tracker (the
+        station's alarm-tone frames, the cloud's alarm pushes, a disarm) and is already
+        set when a subscriber receives the event. It is not re-read on reconnect: an
+        alarm that ends while the session is down stays on until the next transition."""
+        return self._alarm is not None and self._alarm.alarming
+
+    @property
+    def last_alarm(self) -> AlarmChanged | None:
+        """The last :class:`~.events.AlarmChanged` for this station (its channel, event
+        type, duration or stop source); None before any."""
+        return self._alarm
+
+    def note_alarm(self, change: AlarmChanged) -> None:
+        """Record an alarm transition for this station (:attr:`alarming`).
+
+        The station records its own session's at once; :class:`~.client.EufySecurity`
+        records the ones its tracker makes from a push or a disarm before emitting
+        them. A change for another station is ignored.
+        """
+        if change.station_sn == self.serial:
+            self._alarm = change
 
     @property
     def last_error(self) -> EufySecurityError | None:
@@ -2005,7 +2056,9 @@ class Station:
                 d.device_sn for d in self.sub_devices if self._is_own_camera(d.device_sn)
             )
             if not chosen:
-                raise UnsupportedError(f"{self._log_name} has no paired camera")
+                raise UnsupportedError(
+                    f"{self._log_name} has no paired camera", device_sn=self.serial
+                )
         else:
             chosen = self._own_cameras(serials, "tracking cameras")
             if not chosen:
@@ -2069,7 +2122,8 @@ class Station:
         for serial in out:
             if not self._is_own_camera(serial):
                 raise UnsupportedError(
-                    f"{redact_serial(serial)} is not a camera paired to {self._log_name}"
+                    f"{redact_serial(serial)} is not a camera paired to {self._log_name}",
+                    device_sn=serial,
                 )
         return out
 
@@ -2104,7 +2158,8 @@ class Station:
         if mode in CUSTOM_MODES and not config.is_defined(mode):
             have = ", ".join(m.name for m in config.modes if m.custom) or "none"
             raise UnsupportedError(
-                f"{self._log_name} has no {mode.label} (its custom modes: {have})"
+                f"{self._log_name} has no {mode.label} (its custom modes: {have})",
+                device_sn=self.serial,
             )
         return config.mode_name(mode)
 
@@ -2684,7 +2739,8 @@ class Station:
         form = ptz_form(code, action, self._connect_type_of(device_sn))
         if form is None:
             raise UnsupportedError(
-                f"{redact_serial(device_sn)}: {self._ptz_unsupported_reason(device_sn, [action])}"
+                f"{redact_serial(device_sn)}: {self._ptz_unsupported_reason(device_sn, [action])}",
+                device_sn=device_sn,
             )
         return form
 
@@ -2694,7 +2750,9 @@ class Station:
         channel = self.channel_for(device_sn)
         evidence = self.ptz_support(device_sn, capability)
         if evidence.support is Support.UNKNOWN:
-            raise UnsupportedError(f"{redact_serial(device_sn)} has no {what}: {evidence.source}")
+            raise UnsupportedError(
+                f"{redact_serial(device_sn)} has no {what}: {evidence.source}", device_sn=device_sn
+            )
         return channel
 
     def media_key_type(self, channel: int) -> MediaKeyType:
@@ -2894,7 +2952,8 @@ class Station:
         if source is ImageSource.TRIGGER_FRAME and self.session.standalone:
             raise UnsupportedError(
                 f"{redact_serial(device_sn)} is a standalone device: it lists no recordings, "
-                "so there is no trigger frame (use THUMBNAIL or LIVE)"
+                "so there is no trigger frame (use THUMBNAIL or LIVE)",
+                device_sn=device_sn,
             )
         if source is ImageSource.THUMBNAIL:
             still = await self.async_event_thumbnail(event)
@@ -3003,7 +3062,9 @@ class Station:
         path = summary.newest_still
         stamp = None if path is None else _still_time(path)
         if path is None or stamp is None:
-            raise RecordNotFoundError(f"{redact_serial(device_sn)} has no dated event still")
+            raise RecordNotFoundError(
+                f"{redact_serial(device_sn)} has no dated event still", device_sn=device_sn
+            )
         zone = await self._device_zone()
         taken = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=zone)
         offset = taken.timestamp() - event.event_time_ms / 1000
@@ -3042,11 +3103,14 @@ class Station:
         if source is not ImageSource.THUMBNAIL:
             raise UnsupportedError(
                 f"{redact_serial(device_sn)} is a standalone device: it lists no recordings, "
-                "so there is no trigger frame (use THUMBNAIL or LIVE)"
+                "so there is no trigger frame (use THUMBNAIL or LIVE)",
+                device_sn=device_sn,
             )
         summary = await self.session.async_event_summary(device_sn)
         if summary.newest_still is None:
-            raise RecordNotFoundError(f"{redact_serial(device_sn)} has no event still")
+            raise RecordNotFoundError(
+                f"{redact_serial(device_sn)} has no event still", device_sn=device_sn
+            )
         still = await self.async_fetch_still(summary.newest_still)
         if not still.is_image:
             raise UnsupportedError(f"the newest still is not a JPEG ({still.format})")
@@ -3077,7 +3141,8 @@ class Station:
             if found := next((row for row in rows if usable(row)), None):
                 return found
         raise RecordNotFoundError(
-            f"no {source} of {redact_serial(device_sn)} in the last {days} day(s) of history"
+            f"no {source} of {redact_serial(device_sn)} in the last {days} day(s) of history",
+            device_sn=device_sn,
         )
 
     async def _live_image(
@@ -3171,6 +3236,7 @@ class Station:
             raise CommandNotAppliedError(
                 SubCommand.COMMAND_APP_SET_DEFAULT_POSITION,
                 f"{redact_serial(device_sn)} did not make preset {preset} its default",
+                device_sn=device_sn,
             )
         return slots
 
@@ -3206,7 +3272,10 @@ class Station:
         self._ptz_form(device_sn, "set_picture_zoom")
         view_mode = self.session.merged_params().devices.get(channel, {}).get(VIEW_MODE_PARAM)
         if json_int(view_mode) == DUAL_VIEW:
-            raise UnsupportedError(f"{redact_serial(device_sn)} is in dual view; zoom needs single")
+            raise UnsupportedError(
+                f"{redact_serial(device_sn)} is in dual view; zoom needs single",
+                device_sn=device_sn,
+            )
         self._refuse_while_capturing(device_sn)
         await self._ptz_recipe(set_picture_zoom(zoom), channel)
 
@@ -3420,6 +3489,7 @@ class Station:
             raise CommandNotAppliedError(
                 SubCommand.COMMAND_INDOOR_SPAN_DEL_POINT,
                 f"{redact_serial(device_sn)} still holds preset {preset}",
+                device_sn=device_sn,
             )
         return slots
 
@@ -3452,7 +3522,8 @@ class Station:
         if known and not any(s.index == preset for s in known):
             raise UnsupportedError(
                 f"{redact_serial(device_sn)} has no preset slot {preset} "
-                f"(slots 0-{max(s.index for s in known)})"
+                f"(slots 0-{max(s.index for s in known)})",
+                device_sn=device_sn,
             )
         if preset < 0:
             raise UnsupportedError(f"preset {preset} is not a slot number")
@@ -3570,7 +3641,8 @@ class Station:
         if running is not None:
             raise DeviceBusyError(
                 f"{redact_serial(device_sn)} is busy with "
-                + ("a live image" if running.preset is None else f"preset {running.preset}")
+                + ("a live image" if running.preset is None else f"preset {running.preset}"),
+                device_sn=device_sn,
             )
 
     def _stored_slot(self, device_sn: str, preset: int) -> int:
@@ -3579,7 +3651,9 @@ class Station:
         channel = self._preset_channel(device_sn)
         known = self.presets(device_sn)
         if known is not None and not any(s.index == preset and s.enabled for s in known):
-            raise UnsupportedError(f"preset {preset} is not set on {redact_serial(device_sn)}")
+            raise UnsupportedError(
+                f"preset {preset} is not set on {redact_serial(device_sn)}", device_sn=device_sn
+            )
         return channel
 
     def _preset_channel(self, device_sn: str) -> int:
@@ -3638,7 +3712,8 @@ class Station:
     def _require_own_event(self, event: SecurityEvent) -> None:
         if event.station_sn is not None and event.station_sn != self.serial:
             raise UnsupportedError(
-                f"the event belongs to {redact_serial(event.station_sn)}, not {self._log_name}"
+                f"the event belongs to {redact_serial(event.station_sn)}, not {self._log_name}",
+                device_sn=event.station_sn,
             )
 
     def _media_channel(self, device_sn: str | None, channel: int | None) -> int:

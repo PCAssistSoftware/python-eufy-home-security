@@ -779,7 +779,11 @@ A closed session (`async_close`) never reconnects on its own — build a new
   alarm pushes), transitions only, and a disarm ends it; `stop_source` says `APP`
   (verified), `KEYPAD` or `HOMEBASE` when a stop named one, `duration_s` the tone's
   length over P2P. A cloud-only station gets no end when the alarm times out: expect it
-  to stay triggered until a stop or disarm, or end it on a timer of your own. `DELAY`
+  to stay triggered until a stop or disarm, or end it on a timer of your own. The same
+  state is on the station: `station.alarming` (bool) and `station.last_alarm` (the last
+  `AlarmChanged`, None before any), already set when a subscriber receives the event, so
+  a panel or card reads it at setup and on any later refresh instead of keeping a copy.
+  `DELAY`
   (pending) is only on the push: `SecurityEvent.alarm_phase is AlarmPhase.DELAY` for
   `alarm_delay` seconds (msg_type 16, unverified). For `changed_by`, use
   `arming_source` (keypad, key fob, app; `None` when not authenticated) and `user_name`
@@ -878,7 +882,12 @@ A closed session (`async_close`) never reconnects on its own — build a new
   read a switch with `mode_action_on(flag, mask)`, never `mask & bit`. Turning it off
   sets the bit and, as the app does, also turns that sensor's `notification` and
   `station_alarm` off in the same write (`MODE_ACTION_CLEARS`); turning it on again
-  restores neither, so refresh those switches after a write. A siren accessory is of kind `other`, not `sensor`. One switch per (mode, flag), for
+  restores neither, so refresh those switches after a write. `MODE_ACTION_ALARM_AFFECTING`
+  names the flags whose change changes what sounds or flashes on a trigger
+  (`camera_siren`, `station_alarm`, `light_alarm`, and `motion_sensor_respond` for the
+  HomeBase alarm it clears): confirm those switches with the user; `record`,
+  `notification`, `privacy` and `report_monitor_center` sound nothing.
+  `MODE_ACTION_LABELS` titles every flag. A siren accessory is of kind `other`, not `sensor`. One switch per (mode, flag), for
   example "Front · Away · camera siren", written with
   `station.async_set_mode_action("away", "camera_siren", on, device_sn=…)`: it reads the
   current mask fresh, changes that one bit, writes and confirms by read-back. **Never
@@ -1097,6 +1106,30 @@ it disabled by default and show `setting.note`, the warning, where the user enab
 A readable setting that is not writable and has no control (`hb_keypad_is_password_set`,
 a status the app only reads) is a sensor, not a switch.
 
+**Settings a release drops.** A later release can drop a key (a variant folded into its
+primary, a vendor property removed, a key the app offers a paired device only without a
+parent). Ask the library instead of matching key patterns: for every stored setting
+entity, at setup once the stations are built (after `async_discover()`),
+`station.has_setting(key, device_sn)` (`device_sn` None for the station itself) says
+whether the key is still a setting of that device here:
+
+```python
+for entry in entity_registry.entries_for_config_entry(entry_id):
+    device_sn, key = parse_unique_id(entry.unique_id)  # the integration's own scheme
+    if station.has_setting(key, device_sn) is False:
+        entity_registry.async_remove(entry.entity_id)
+```
+
+- **True**: the key is in `settings_for(device_sn)`, the model's file in the device's
+  context plus a paired device's per-mode delays and actions.
+- **False**: the device's list is known and lacks the key: remove the entity.
+- **None**: the list is unknown (a model without a settings file whose thing
+  description is not listed yet, or no product code): keep the entity and ask again
+  after the next discovery.
+
+It covers settings only: a per-(mode, flag) switch is the integration's own key and
+stays as long as `mode_action_flags` of the device names its flag.
+
 #### One entity per writable setting: `setting.control`
 
 `setting.control` (`SettingControl`, None when the library does not write the setting)
@@ -1148,26 +1181,26 @@ description. It never blocks a read or a write.
 ### Grouping settings in a UI
 
 Every setting belongs to exactly one section: `setting.section` is its id (never None),
-`setting.section_info` its `SettingSection(id, heading, order)`. `SETTING_SECTIONS` lists
+`setting.section_info` its `SettingSection(id, heading, order, alarm_affecting)`. `SETTING_SECTIONS` lists
 every section in display order; `setting_section(id)` looks one up (`UnsupportedError`
 for an unknown id). All are exported from the package root.
 
-| id | heading | order | holds |
-|---|---|---|---|
-| `picture` | Picture | 10 | night vision, image, lights and indicator LEDs, watermark, orientation |
-| `detection` | Detection | 20 | motion, sound, radar and AI detection, zones, package guard, cross-camera tracking |
-| `recording` | Recording | 30 | recording and streaming quality, clip length, continuous recording, audio recording |
-| `audio` | Audio | 40 | microphone, speaker, two-way talk |
-| `power` | Power | 50 | power mode, power source, battery and solar |
-| `ptz` | Pan & tilt | 60 | pan/tilt speed, tracking, cruise, presets, gestures |
-| `notifications` | Notifications | 70 | push notifications, their types, intervals and snooze |
-| `doorbell` | Doorbell & chime | 80 | chimes, ringtones, quick and automatic responses |
-| `alarm` | Alarm | 90 | siren, alarm tone and volume, prompts, anti-theft, SOS |
-| `modes` | Modes | 100 | guard modes, keypad, and the per-mode delays and device actions |
-| `storage` | Storage | 110 | HomeBase, NAS, SD-card and cloud storage |
-| `network` | Network | 120 | Wi-Fi, bridges, the HomeBase link, HomeKit and streaming protocols |
-| `system` | System | 130 | name, time zone and format, working mode, firmware, device information |
-| `other` | Other | 140 | a setting no other section fits |
+| id | heading | order | alarm-affecting | holds |
+|---|---|---|---|---|
+| `picture` | Picture | 10 | | night vision, image, lights and indicator LEDs, watermark, orientation |
+| `detection` | Detection | 20 | | motion, sound, radar and AI detection, zones, package guard, cross-camera tracking |
+| `recording` | Recording | 30 | | recording and streaming quality, clip length, continuous recording, audio recording |
+| `audio` | Audio | 40 | | microphone, speaker, two-way talk |
+| `power` | Power | 50 | | power mode, power source, battery and solar |
+| `ptz` | Pan & tilt | 60 | | pan/tilt speed, tracking, cruise, presets, gestures |
+| `notifications` | Notifications | 70 | | push notifications, their types, intervals and snooze |
+| `doorbell` | Doorbell & chime | 80 | | chimes, ringtones, quick and automatic responses |
+| `alarm` | Alarm | 90 | yes | siren, alarm tone and volume, prompts, anti-theft, SOS |
+| `modes` | Modes | 100 | yes | guard modes, keypad, and the per-mode delays and device actions |
+| `storage` | Storage | 110 | | HomeBase, NAS, SD-card and cloud storage |
+| `network` | Network | 120 | | Wi-Fi, bridges, the HomeBase link, HomeKit and streaming protocols |
+| `system` | System | 130 | | name, time zone and format, working mode, firmware, device information |
+| `other` | Other | 140 | | a setting no other section fits |
 
 - **Build tabs or headings from `setting.section`, never from lists of keys.** A new model
   or a new setting arrives in its section with a library release.
@@ -1181,6 +1214,13 @@ for an unknown id). All are exported from the package root.
 - **Per-mode delays and actions** (`camera_action_*`, `sensor_action_*`, `alarm_delay_*`,
   `leaving_delay_*`) are in `modes` (`MODES_SECTION`): a camera view skips that section
   rather than matching key patterns.
+- **Confirm alarm-affecting settings.** `setting.alarm_affecting` is true for every
+  setting of an alarm-affecting section (`alarm`, `modes`): a write sounds the HomeBase
+  or camera (the alarm volume and tone play at once) or changes when and how the alarm
+  sounds (siren, anti-theft, SOS, guard mode, keypad, per-mode delays and actions). Ask
+  the user before sending one; the library does not prompt. The rule follows the
+  section the settings-file generator gives each setting from the eufy app's page, so
+  a new alarm setting is covered with the release that brings it.
 - The same setting key can sit in different sections on different device kinds
   (`led_on_off`: `picture` on a camera, `system` on a HomeBase).
 - A setting from a model without a settings file (see below) is in `other`.
@@ -2250,6 +2290,18 @@ station.config  # the same, built from the current state, no I/O
   the copy the station stores per mode (on a HomeBase 3, 1157-1161 and 1177, usually from
   the cloud list, which lags a write until the next list fetch). None when no source
   carries the table (a mode never configured); a table is never invented.
+- **Delay choices.** An entry (`alarm_delay`) or exit (`leaving_delay`) delay takes one of
+  `MODE_DELAY_CHOICES` (`from eufy_home_security import MODE_DELAY_CHOICES`: 0, 15, 30,
+  45, 60, 180, 300 s; 0 is off), the list the eufy app offers on every station. No model
+  has a list of its own; a station whose `config_support(StationFeature.MODE_DELAYS)` is
+  `UNKNOWN` (the app offers no delays there, or the library cannot send them) gets no
+  delay control at all. The per-mode delay settings carry the same list as
+  `setting.values`.
+- **Cross-camera tracking time.** `config.cross_camera.continuous_time_s` is the
+  continuous tracking time in seconds (120-1800); `continuous_time` is the same choice
+  as the setting's value (`setting_keys["cross_camera.continuous_time"]` names the
+  setting): an option index on a HomeBase 3 (1 = "3 min" = 180 s), titled by the
+  setting's `labels` and written with `async_set_setting`.
 - **Missing and unreadable values.** A value no source carries is None and has no
   `sources` entry. A value a source carries but that does not decode is named in
   `config.unreadable` with the reason; the field falls back to the next source, else None.
@@ -2317,7 +2369,11 @@ await station.async_set_mode_actions("away", {cam_sn: {"camera_siren": True}})
   changes after the write; the next cloud refresh then carries it.
 - **Ask first.** `StationFeature.alarm_affecting` names the writes that change how the
   station alarms (schedule, mode tables and delays, guard mode): confirm those with the
-  user. The bulk mode-table write is refused when `MODE_TABLES` (or, for delays,
+  user. Within a mode table, `MODE_ACTION_ALARM_AFFECTING` names the flags that make a
+  device or the HomeBase sound or flash on a trigger, so a card can confirm a siren
+  toggle and pass a record or notification toggle straight through; a delay is always
+  alarm-affecting. Per setting, `setting.alarm_affecting` says the same (the alarm
+  volume and tone sound the HomeBase when written). The bulk mode-table write is refused when `MODE_TABLES` (or, for delays,
   `MODE_DELAYS`) is `UNKNOWN`.
 
 ### Station configuration support
@@ -2376,6 +2432,7 @@ The library raises typed errors; translate them at the coordinator / setup bound
 | `ConfigChangedError` (`config`, `expected`) | a write's `expect_revision` is stale: the station's configuration changed elsewhere and nothing was sent. Show `err.config` and let the user redo the edit; not an outage |
 | `ModeInUseError` (an `UnsupportedError`; `reason`) | the mode is in use (current, or named by the schedule or its default); nothing was sent. `raise HomeAssistantError` with `reason` |
 | `KeyExchangeRefusedError` (a `CloudApiError`; `code` 4404 or 463, `status` 463) | the cloud gateway refused the client's key identity and a new key exchange did not restore it. Not a reauth and not a kick-out: no login was attempted and none helps by itself. Carry on from the cache and retry on the next interval; the library re-keys at each attempt. Raise a repair issue only if it persists (hours) |
+| any error with `device_sn` (every `EufySecurityError` has the attribute, None by default) | the message names a device by its redacted serial (`T8030***4321 has no local station`); `err.device_sn` is that device's full serial (the first one the message names). Map it to the device's name for the user instead of matching the redacted form in the text; the message itself stays as it is, fit for logs |
 
 Errors that happen in the background (a key or owner-id refresh inside a running session,
 the push listener's token upload) do not raise anywhere the integration can catch. They
