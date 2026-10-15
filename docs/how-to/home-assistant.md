@@ -778,7 +778,9 @@ A closed session (`async_close`) never reconnects on its own — build a new
   start and one end per alarm across both channels (the P2P tone frames and the cloud
   alarm pushes), transitions only, and a disarm ends it; `stop_source` says `APP`
   (verified), `KEYPAD` or `HOMEBASE` when a stop named one, `duration_s` the tone's
-  length over P2P. A cloud-only station gets no end when the alarm times out: expect it
+  length over P2P. `at` is when the library saw the change (UTC, aware: the time to show
+  as "triggered at"), `event_time` the time an alarm push carries itself (the station's
+  trigger time where its payload names one), None for a P2P frame or a disarm. A cloud-only station gets no end when the alarm times out: expect it
   to stay triggered until a stop or disarm, or end it on a timer of your own. The same
   state is on the station: `station.alarming` (bool) and `station.last_alarm` (the last
   `AlarmChanged`, None before any), already set when a subscriber receives the event, so
@@ -934,7 +936,7 @@ A closed session (`async_close`) never reconnects on its own — build a new
   await station.async_set_mode_delays("home", exit_s=60)  # delays only, one write
   ```
 
-  It returns the mode's `ModeTable` (`eufy_home_security.p2p.mode_actions`: per-channel
+  It returns the mode's `ModeTable` (`from eufy_home_security import ModeTable`: per-channel
   `actions`, `alarm_delays`, `leaving_delays`). The delays keep the one-value-per-mode
   rule: `entry_s`/`exit_s` set the value of every device that has the delay on afterwards
   (0 turns it off on all); a device turned on without a value takes the value the others
@@ -2323,6 +2325,15 @@ station.config  # the same, built from the current state, no I/O
   as the setting's value (`setting_keys["cross_camera.continuous_time"]` names the
   setting): an option index on a HomeBase 3 (1 = "3 min" = 180 s), titled by the
   setting's `labels` and written with `async_set_setting`.
+- **Cross-camera cameras.** `config.cross_camera.eligible` lists the serials tracking can
+  follow, by channel: the paired cameras and doorbells, as the eufy app's camera list
+  offers them (it leaves out sensors, keypads and sirens; the library also leaves out a
+  device whose model is not a known camera or doorbell, such as a lock).
+  `station.cross_camera_eligible()` gives the same from the cloud's device list, without
+  a state. Offer these in the card's camera picker and group editor instead of picking
+  by device kind: `async_set_cross_camera_cameras` and `async_set_cross_camera_groups`
+  refuse any other serial with the same rule, and `None` chooses all of them.
+  `cameras` None means every one of them is chosen. Declared from the app.
 - **Missing and unreadable values.** A value no source carries is None and has no
   `sources` entry. A value a source carries but that does not decode is named in
   `config.unreadable` with the reason; the field falls back to the next source, else None.
@@ -2346,16 +2357,25 @@ station.config  # the same, built from the current state, no I/O
 info = await station.async_create_custom_mode("Garden", icon=3, expect_revision=rev)
 info = await station.async_rename_custom_mode(GuardMode.CUSTOM_2, "Yard")  # ModeInfo
 await station.async_delete_custom_mode("custom_2")
+from eufy_home_security import GuardMode, Schedule, ScheduleSlot, Weekday
+
 schedule = Schedule(
     account_id=None,
     slots=(ScheduleSlot(Weekday.MONDAY, time(8), time(17), GuardMode.AWAY),),
-)  # from eufy_home_security.p2p.station_config_codecs
+)
 slots, default = await station.async_set_schedule(schedule, default_mode=GuardMode.DISARMED)
-await station.async_set_cross_camera_cameras([cam_sn, other_sn])  # None: every camera
+await station.async_set_cross_camera_cameras([cam_sn, other_sn])  # 2 or more; None: all
 await station.async_set_cross_camera_groups([[cam_sn, other_sn]])  # []: no group
 await station.async_set_mode_actions("away", {cam_sn: {"camera_siren": True}})
 ```
 
+- **Slots to midnight.** A slot that runs to the end of its day has `end` 00:00
+  (`slot.ends_at_midnight`; show it as 24:00). The eufy app stores and shows that end as
+  23:59, and the library reads 23:59 (or a stored 24:00) as 00:00 and writes it back as
+  23:59, so a card that re-sends the slots it read leaves them unchanged. Build one with
+  `end=time(0)` (an end of `time(23, 59)` is the same slot). A slot over midnight is two
+  slots, to 00:00 and from 00:00 on the next weekday, as the app stores it. Declared from
+  the app, not tested on a station.
 - **What is sent.** Each call reads the station fresh, changes the one object and writes
   it whole: the mode list (1256: add, rename or delete), the schedule (1254) and, when
   it changes, the mode outside its slots (1257), the tracking cameras (1072) or groups
@@ -2369,8 +2389,8 @@ await station.async_set_mode_actions("away", {cam_sn: {"camera_siren": True}})
   change them with `async_set_mode_actions`. `icon` is the app's `iconType` 0-7; the
   default 7 (`DEFAULT_MODE_ICON`) shows as the app's sliders ("customize") icon.
 - **Refused before sending.** `UnsupportedError` when `config_support` of the call's
-  feature is `UNKNOWN`, for a serial that is not a camera paired to the station (a
-  sensor, another station's camera), for a mode list that cannot be read or that no
+  feature is `UNKNOWN`, for a tracking serial not in `cross_camera.eligible` (a sensor,
+  a keypad, another station's camera), for a mode list that cannot be read or that no
   source carries yet (a station without a cloud copy: refresh first). `ValueError`, with
   a message a card can show: a mode name that is empty, over 30 characters or already
   used, an icon outside 0-7, a fourth custom mode, a built-in or missing mode to rename
@@ -2460,6 +2480,7 @@ The library raises typed errors; translate them at the coordinator / setup bound
 | `ModeInUseError` (an `UnsupportedError`; `reason`) | the mode is in use (current, or named by the schedule or its default); nothing was sent. `raise HomeAssistantError` with `reason` |
 | `KeyExchangeRefusedError` (a `CloudApiError`; `code` 4404 or 463, `status` 463) | the cloud gateway refused the client's key identity and a new key exchange did not restore it. Not a reauth and not a kick-out: no login was attempted and none helps by itself. Carry on from the cache and retry on the next interval; the library re-keys at each attempt. Raise a repair issue only if it persists (hours) |
 | any error with `device_sn` (every `EufySecurityError` has the attribute, None by default) | the message names a device by its redacted serial (`T8030***4321 has no local station`); `err.device_sn` is that device's full serial (the first one the message names). Map it to the device's name for the user instead of matching the redacted form in the text; the message itself stays as it is, fit for logs |
+| any error with `device_sns` (every `EufySecurityError`; `()` by default) | every device the error is about, in the order the message names them, `device_sn` first: one serial for an error about one device, several where a message names several. A mode-table write (`async_set_mode_actions`, `async_set_mode_delays`, `async_set_mode_action`) names several: `CommandNotAppliedError` for the devices whose flag or delay the read-back does not show, or for paired devices missing from the parameter dump, and `UnsupportedError` for devices of no known kind. Name each device for the user; a channel the cloud lists no device on is in the message only |
 
 Errors that happen in the background (a key or owner-id refresh inside a running session,
 the push listener's token upload) do not raise anywhere the integration can catch. They
@@ -2721,6 +2742,10 @@ can prove what a boundary mock cannot:
   Lower `DISCOVERY_ATTEMPTS` / `DISCOVERY_TIMEOUT` in `eufy_home_security.p2p.session`
   first, or the test waits the production timeouts.
 - **Events:** `fake.push_camera_event(cipher=…)` reaches `eufy.subscribe`, GCM or ECB.
+- **Modes and schedule:** `fake.set_mode_list({GuardMode.CUSTOM_1: "Night watch"})` and
+  `fake.set_schedule([ScheduleSlot(...)], default=...)` seed what `StationConfig` reads;
+  `mode_list_params` / `schedule_params` give the same values for the cloud's copy
+  (`FakeCloud.set_station_params`). See [testing.md](testing.md#controlling-the-fakes).
 - **A standalone battery camera:** a device-list entry whose `parent_sn` is its own serial
   (build it as `"T8170" + SYNTHETIC.station_sn[5:]`), `device_type` 48, `device_channel` 0,
   a `p2p_did`, and a `params` list (`param_type`, `param_value`, `update_time`) for its

@@ -782,9 +782,14 @@ characters after trimming or already used by another mode, a `detail` over 60
 characters, and deleting a mode the schedule uses.
 
 **Schedule (1254).** `week` 0 is Sunday; a slot runs from `start` up to `end` within one
-day (the app's whole day is 00:00–23:59). A write (frame type 1254) carries the whole
-table. The codec requires `start < end`, no two slots of a weekday sharing a minute,
-and a slot mode (and the 1257 default) among Away, Home, Custom 1–3 and Disarmed.
+day. A slot that runs to midnight ends at 23:59 as the app stores it (its whole day is
+00:00–23:59, and it stores a slot over midnight as one to 23:59 and one from 00:00 on the
+next day); it reads an end of 24:00 as 23:59 too. The codec reads both as an end of
+midnight (`ScheduleSlot.end` 00:00, `ends_at_midnight`) and writes it as 23:59, so the
+app's form round-trips unchanged; this is **[declared]** from the app, not tested on a
+station. A write (frame type 1254) carries the whole table. The codec requires `start`
+before `end`, no two slots of a weekday sharing a minute, and a slot mode (and the 1257
+default) among Away, Home, Custom 1–3 and Disarmed.
 
 **Stored mode tables.** The same keys and key order as the 1255 body. The codec reads
 a count-down as the app does (each listed device of the table at `delay_time`, the
@@ -805,7 +810,12 @@ ignores. Example (Home, 61300, decoded):
 
 **Cross-camera tracking (1072, 1073).** A write is a 1350 `DeviceMsgBean` on channel
 255 whose `cmd` is the param and whose `payload` is the whole list (the serials, or the
-`{"value": [...]}` groups); the station stores its base64.
+`{"value": [...]}` groups); the station stores its base64. The app offers every device
+paired to the station except its sensors, keypads and sirens (serial prefixes T8900,
+T8910, T8920, T8931, T8960, T8970, T870G, T90C0, T90E0, T90F0, T90G0, T90K0, T90M0,
+T90P0, T90R0, T90R1, T90S0; the product handlers drop the same prefixes, T870G aside,
+when they read 1072); the library takes the catalogued cameras and doorbells among them
+(`devices.cross_camera_candidate`) **[declared]**.
 
 **Library writes [app].** `Station.async_create_custom_mode` / `async_rename_custom_mode` /
 `async_delete_custom_mode` send 1256 and `async_set_schedule` 1254 as frames of their own

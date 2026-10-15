@@ -325,6 +325,30 @@ async def test_an_unchanged_schedule_and_default_send_nothing(
     assert fake.ecb_received == []
 
 
+async def test_a_card_resending_a_slot_to_midnight_changes_nothing(
+    station: Station, fake: FakeStation
+) -> None:
+    """The app's 23:59 reads as an end of 00:00; the same slots back send nothing, and an
+    edit next to them keeps the 23:59 as stored."""
+    stored = {"end_h": 23, "end_m": 59, "mode_id": 0, "start_h": 22, "start_m": 0, "week": 5}
+    station.apply_cloud_device(
+        _cloud_entry({1256: LISTED, 1254: b64({"account_id": ACCOUNT, "schedules": [stored]})})
+    )
+    config = await station.async_get_config()
+    assert config.schedule is not None
+    (slot,) = config.schedule.slots
+    assert (slot.end, slot.ends_at_midnight) == (dt.time(0), True)
+    card = ScheduleSlot(Weekday(slot.weekday), slot.start, dt.time(0), slot.mode)
+    await station.async_set_schedule(Schedule(account_id=None, slots=(card,)))
+    assert fake.config_frames_received == []
+    extra = ScheduleSlot(Weekday.MONDAY, dt.time(8), dt.time(9), GuardMode.HOME)
+    await station.async_set_schedule(Schedule(account_id=None, slots=(card, extra)))
+    assert (
+        b'{"end_h":23,"end_m":59,"mode_id":0,"start_h":22,"start_m":0,"week":5}'
+        in (sent(fake, 1254)[0])
+    )
+
+
 @pytest.mark.parametrize(
     ("schedule_", "default", "match"),
     [
@@ -392,18 +416,25 @@ def tracking_writes(fake: FakeStation) -> list[tuple[int, object]]:
 async def test_choose_tracking_cameras_writes_the_list_and_reads_it_back(
     hub: Station, fake: FakeStation
 ) -> None:
-    assert await hub.async_set_cross_camera_cameras([CAMERA_2.device_sn]) == (CAMERA_2.device_sn,)
-    assert await hub.async_set_cross_camera_cameras(None) == (
-        CAMERA.device_sn,
-        CAMERA_2.device_sn,
-    )
-    await hub.async_set_cross_camera_cameras(None)  # already held: nothing sent
-    assert tracking_writes(fake) == [
-        (1072, [CAMERA_2.device_sn]),
-        (1072, [CAMERA.device_sn, CAMERA_2.device_sn]),
-    ]
+    both = (CAMERA.device_sn, CAMERA_2.device_sn)
+    assert await hub.async_set_cross_camera_cameras(both) == both
+    assert await hub.async_set_cross_camera_cameras(None) == both  # held: nothing sent
+    assert tracking_writes(fake) == [(1072, list(both))]
     assert fake.params[255][1072] == b64([CAMERA.device_sn, CAMERA_2.device_sn])
     assert fake.received[-1]["mChannel"] == 255  # the station itself
+
+
+async def test_a_paired_doorbell_can_be_tracked_and_a_sensor_cannot(
+    hub: Station, fake: FakeStation
+) -> None:
+    doorbell = dataclasses.replace(CAMERA, device_sn="T8210P0000000001", device_type=7, channel=2)
+    st = Station(STATION, hub.session, sub_devices=[SENSOR, doorbell, CAMERA])
+    assert st.cross_camera_eligible() == (CAMERA.device_sn, doorbell.device_sn)
+    assert await st.async_set_cross_camera_cameras(None) == st.cross_camera_eligible()
+    with pytest.raises(UnsupportedError, match="that cross-camera tracking can follow") as err:
+        await st.async_set_cross_camera_groups([[CAMERA.device_sn, SENSOR.device_sn]])
+    assert err.value.device_sn == SENSOR.device_sn
+    assert tracking_writes(fake) == [(1072, [CAMERA.device_sn, doorbell.device_sn])]
 
 
 async def test_tracking_groups_write_the_whole_list(hub: Station, fake: FakeStation) -> None:
@@ -427,7 +458,17 @@ async def test_a_tracking_write_the_dump_does_not_show_is_not_applied(
     fake.params[255][1072] = b64([CAMERA.device_sn])
     fake.apply_settings = False
     with pytest.raises(CommandNotAppliedError, match="1072 not confirmed"):
-        await hub.async_set_cross_camera_cameras([CAMERA_2.device_sn])
+        await hub.async_set_cross_camera_cameras([CAMERA_2.device_sn, CAMERA.device_sn])
+
+
+async def test_tracking_needs_two_cameras_as_the_app_does(hub: Station, fake: FakeStation) -> None:
+    with pytest.raises(ValueError, match="at least 2 cameras"):
+        await hub.async_set_cross_camera_cameras([CAMERA.device_sn])
+    lone = Station(STATION, hub.session, sub_devices=[CAMERA, SENSOR])
+    with pytest.raises(UnsupportedError, match="fewer than 2 cameras") as err:
+        await lone.async_set_cross_camera_cameras(None)
+    assert err.value.device_sn == SYNTHETIC.station_sn
+    assert tracking_writes(fake) == []
 
 
 CrossWrite = Callable[[Station], Awaitable[object]]
@@ -439,14 +480,14 @@ CrossWrite = Callable[[Station], Awaitable[object]]
         (
             lambda s: s.async_set_cross_camera_cameras([FOREIGN_CAMERA]),
             UnsupportedError,
-            "is not a camera paired",
+            "is not a camera or doorbell paired",
         ),
         (
             lambda s: s.async_set_cross_camera_cameras([SENSOR.device_sn]),
             UnsupportedError,
-            "is not a camera paired",
+            "is not a camera or doorbell paired",
         ),
-        (lambda s: s.async_set_cross_camera_cameras([]), ValueError, "at least one camera"),
+        (lambda s: s.async_set_cross_camera_cameras([]), ValueError, "at least 2 cameras"),
         (
             lambda s: s.async_set_cross_camera_cameras([CAMERA.device_sn] * 2),
             ValueError,
@@ -461,7 +502,7 @@ CrossWrite = Callable[[Station], Awaitable[object]]
         (
             lambda s: s.async_set_cross_camera_groups([[CAMERA.device_sn, FOREIGN_CAMERA]]),
             UnsupportedError,
-            "is not a camera paired",
+            "is not a camera or doorbell paired",
         ),
         (lambda s: s.async_set_cross_camera_groups([[]]), ValueError, "at least one camera"),
     ],

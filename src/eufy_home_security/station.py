@@ -79,6 +79,7 @@ from .devices.settings import (
 from .devices.station_config_support import (
     ModeTableStorage,
     StationFeature,
+    cross_camera_eligible,
     mode_table_storage,
     restart_command,
     station_config_models,
@@ -240,6 +241,8 @@ READBACK_DELAY = 0.8
 MODE_TABLES_LOCK: Final = "mode_tables"
 """The shared parameter group of the per-mode action tables (:meth:`Station._shared_lock`)."""
 CROSS_CAMERA_LOCK: Final = "cross_camera"
+MIN_TRACKING_CAMERAS: Final = 2
+"""The fewest cameras the eufy app saves as the cross-camera tracking choice."""
 """The shared parameter group of the cross-camera tracking cameras (1072) and groups (1073)."""
 MODE_LIST_LOCK: Final = "mode_list"
 """The shared parameter group of the mode list (1256) and the schedule (1254, 1257), which
@@ -2117,23 +2120,29 @@ class Station:
         (:attr:`~.station_config.StationConfig.setting_keys`).
 
         Raises before anything is sent: ``UnsupportedError`` when cross-camera tracking
-        is *unknown* on the station or a serial is not a camera paired to it (a sensor,
-        another station's camera); ``ValueError`` for an empty choice or a serial listed
-        twice; :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
+        is *unknown* on the station or a serial is not in :meth:`cross_camera_eligible`
+        (a sensor, a keypad, another station's camera) or, for ``None``, when fewer than
+        :data:`MIN_TRACKING_CAMERAS` are eligible; ``ValueError`` for a choice of fewer than
+        :data:`MIN_TRACKING_CAMERAS` (the eufy app saves no smaller one) or a serial listed
+        twice; :class:`~.exceptions.ConfigChangedError` for a stale
+        ``expect_revision``.
         """
         self._require_feature(StationFeature.CROSS_CAMERA)
         if serials is None:
-            chosen = tuple(
-                d.device_sn for d in self.sub_devices if self._is_own_camera(d.device_sn)
-            )
-            if not chosen:
+            chosen = self.cross_camera_eligible()
+            if len(chosen) < MIN_TRACKING_CAMERAS:
                 raise UnsupportedError(
-                    f"{self._log_name} has no paired camera", device_sn=self.serial
+                    f"{self._log_name} has fewer than {MIN_TRACKING_CAMERAS} cameras "
+                    "cross-camera tracking can follow",
+                    device_sn=self.serial,
                 )
         else:
             chosen = self._own_cameras(serials, "tracking cameras")
-            if not chosen:
-                raise ValueError("choose at least one camera; None chooses every camera")
+            if len(chosen) < MIN_TRACKING_CAMERAS:
+                raise ValueError(
+                    f"choose at least {MIN_TRACKING_CAMERAS} cameras, as the eufy app requires; "
+                    "None chooses every camera"
+                )
         value = encode_tracking_cameras(chosen)
         async with self._shared_lock(CROSS_CAMERA_LOCK):
             _, config = await self._config_for_write(expect_revision)
@@ -2157,7 +2166,7 @@ class Station:
         ...]}, ...]``); ``[]`` removes every group.
 
         Raises before anything is sent: ``UnsupportedError`` when tracking groups are
-        *unknown* on the station or a serial is not a camera paired to it;
+        *unknown* on the station or a serial is not in :meth:`cross_camera_eligible`;
         ``ValueError`` for an empty group or a camera listed twice (in one group or in
         two); :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
         """
@@ -2190,21 +2199,24 @@ class Station:
             raise ValueError(f"{what} must be a list of serials, not one string")
         out = tuple(serials)
         encode_tracking_cameras(out)  # refuses an empty or repeated serial
+        eligible = self.cross_camera_eligible()
         for serial in out:
-            if not self._is_own_camera(serial):
+            if serial not in eligible:
                 raise UnsupportedError(
-                    f"{redact_serial(serial)} is not a camera paired to {self._log_name}",
+                    f"{redact_serial(serial)} is not a camera or doorbell paired to "
+                    f"{self._log_name} that cross-camera tracking can follow",
                     device_sn=serial,
                 )
         return out
 
-    def _is_own_camera(self, serial: str) -> bool:
-        model = model_for_serial(serial)
-        return (
-            any(d.device_sn == serial for d in self.sub_devices)
-            and model is not None
-            and model.kind is DeviceKind.CAMERA
-        )
+    def cross_camera_eligible(self) -> tuple[str, ...]:
+        """The serials of the paired devices cross-camera tracking can follow, by channel:
+        the cameras and doorbells the eufy app offers in its camera list
+        (:func:`~.devices.station_config_support.cross_camera_candidate`). The rule
+        :meth:`async_set_cross_camera_cameras` and :meth:`async_set_cross_camera_groups`
+        check a serial against, and what ``None`` chooses. No I/O."""
+        paired = sorted(self.sub_devices, key=lambda d: (d.channel is None, d.channel or 0))
+        return cross_camera_eligible(d.device_sn for d in paired)
 
     async def _async_write_list(
         self, param: int, payload: list[Any], stored: str, holds: Callable[[str], bool]
@@ -2394,6 +2406,7 @@ class Station:
                     command,
                     f"{mode.name.lower()} mode table: channels {missing} are missing from the "
                     "parameter dump; refusing to write a mode table without them",
+                    device_sns=self._serials_on(missing),
                 )
             state = self._state(dump)
             for target, spec in sorted(targets.items()):
@@ -2433,7 +2446,8 @@ class Station:
                 raise UnsupportedError(
                     f"{mode.name.lower()} mode table: channels {unknown} are of no known "
                     "device kind; a mode table always clears siren-accessory triggers, so it "
-                    "is not written"
+                    "is not written",
+                    device_sns=self._serials_on(unknown),
                 )
             new.request("")  # refuses a delay the table cannot carry, before any traffic
             if stored_param is not None:
@@ -2442,10 +2456,17 @@ class Station:
             try:
                 await self.session.async_set_mode_table(new)
             except CommandNotAppliedError as err:
+                detail, serials = self._mode_table_mismatch(new)
                 raise CommandNotAppliedError(
-                    err.command, f"{self._mode_table_mismatch(new)}: {err}"
+                    err.command, f"{detail}: {err}", device_sns=serials
                 ) from err
             return table, new
+
+    def _serials_on(self, channels: Iterable[int]) -> tuple[str, ...]:
+        """The cloud serials of the devices on ``channels``, in their order; a channel the
+        cloud lists no device on (or several) is left out."""
+        cloud = self._cloud_by_channel()
+        return tuple(d.device_sn for ch in channels if (d := cloud.get(ch)) is not None)
 
     @staticmethod
     def _stored_table_for_write(
@@ -2511,16 +2532,19 @@ class Station:
         receipted = await self.session.async_send_json_frame(CMD_SET_ALL_ACTION, body)
         await self._async_confirm_param(param, encode_stored_mode_table(sent[-1]), holds, receipted)
 
-    def _mode_table_mismatch(self, table: ModeTable) -> str:
-        """Which device's flag or delay the last read does not show as ``table`` set it."""
+    def _mode_table_mismatch(self, table: ModeTable) -> tuple[str, tuple[str, ...]]:
+        """Which device's flag or delay the last read does not show as ``table`` set it,
+        and the serials of those devices, in the order the text names them."""
         reported = self.session.merged_params().devices
         cloud = self._cloud_by_channel()
         action_param = FIELD_PARAMS[ModeTableField.ACTION][table.mode]
         problems: list[str] = []
+        serials: list[str] = []
         for channel, values in sorted(table.params().items()):
             entry = cloud.get(channel)
             name = redact_serial(entry.device_sn) if entry else f"channel {channel}"
             block = reported.get(channel, {})
+            before = len(problems)
             for param, want in sorted(values.items()):
                 raw = block.get(param)
                 got = json_int(raw) if raw is not None else None
@@ -2544,8 +2568,10 @@ class Station:
                     named |= bit
                 if (want ^ got) & ~named:
                     problems.append(f"{name} action: wrote {want}, station reports {got}")
+            if entry is not None and len(problems) > before:
+                serials.append(entry.device_sn)
         detail = "; ".join(problems) or "the read-back differs"
-        return f"{table.mode.name.lower()} mode table not confirmed ({detail})"
+        return f"{table.mode.name.lower()} mode table not confirmed ({detail})", tuple(serials)
 
     async def async_set_mode_action(
         self,
