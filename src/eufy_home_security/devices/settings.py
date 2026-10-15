@@ -21,7 +21,16 @@ from typing import Final
 
 from ..exceptions import UnsupportedError
 from ..models import STATION_CHANNEL, GuardMode
-from ..p2p.mode_actions import ACTION_FLAGS, FIELD_PARAMS, MODE_TABLE_MODES, ModeTableField
+from ..p2p.mode_actions import (
+    ACTION_FLAGS,
+    FIELD_PARAMS,
+    MODE_ACTION_CLEARS,
+    MODE_DELAY_CHOICES,
+    MODE_TABLE_MODES,
+    ModeTableField,
+    mode_action_bits,
+    mode_action_on,
+)
 from .types import DeviceKind
 
 
@@ -65,7 +74,7 @@ class SettingKind(StrEnum):
     """The value shape of a mode-table setting (see :attr:`SettingDef.kind`)."""
 
     NUMBER = "number"
-    """An integer in ``value_range``."""
+    """An integer in ``value_range`` (one of ``values`` when it names any)."""
     FLAGS = "flags"
     """A bitmask with named single-bit ``flags``; unnamed bits must be preserved."""
 
@@ -95,6 +104,8 @@ class SettingDef:
     description: str
     unit: SettingUnit = SettingUnit.NONE
     value_range: tuple[int, int] | None = None
+    values: tuple[int, ...] = ()
+    """The only values a write takes, within ``value_range``; empty for any."""
     flags: Mapping[str, int] | None = None
 
     @property
@@ -126,21 +137,24 @@ class SettingDef:
 
     def decode_flags(self, raw: str | int) -> tuple[frozenset[str], int]:
         """A reported bitmask as the set of named flags that are on, plus the leftover
-        bits no name covers (preserve those on every write).
+        bits no name covers (preserve those on every write). A flag of
+        :data:`~..p2p.mode_actions.MODE_ACTION_INVERTED` is on while its bit is clear.
 
         Raises ``UnsupportedError`` for a setting that is not ``FLAGS`` and
         ``ValueError`` for a value that is not a non-negative integer.
         """
         flags = self._flags()
         number = _bitmask(self.key, raw)
-        names = frozenset(name for name, bit in flags.items() if number & bit)
+        names = frozenset(name for name in flags if mode_action_on(name, number))
         named = 0
         for bit in flags.values():
             named |= bit
         return names, number & ~named
 
     def with_flag(self, current: int, name: str, on: bool) -> int:
-        """``current`` with the flag ``name`` set or cleared; every other bit is kept.
+        """``current`` with the flag ``name`` turned on or off (its bit cleared to turn on
+        a flag of :data:`~..p2p.mode_actions.MODE_ACTION_INVERTED`); every other bit is
+        kept.
 
         Raises ``UnsupportedError`` for a setting that is not ``FLAGS`` or a flag name
         it does not name, and ``ValueError`` for a negative ``current``.
@@ -150,8 +164,33 @@ class SettingDef:
             raise UnsupportedError(
                 f"{name!r} is not a flag of {self.key}; known flags: {', '.join(flags)}"
             )
-        number = _bitmask(self.key, current)
-        return number | flags[name] if on else number & ~flags[name]
+        return mode_action_bits(name, _bitmask(self.key, current), on)
+
+    def with_flags(self, current: int, changes: Mapping[str, bool]) -> int:
+        """``current`` with every flag of ``changes`` turned on or off (:meth:`with_flag`),
+        and, as the eufy app does, the flags
+        :data:`~..p2p.mode_actions.MODE_ACTION_CLEARS` names for a flag turned off turned
+        off too; every other bit is kept.
+
+        Raises as :meth:`with_flag`, and ``ValueError`` when ``changes`` turns on a flag
+        that a flag it turns off clears (a motion sensor set to ignore motion with its
+        notification on).
+        """
+        mask = current
+        for name, on in changes.items():
+            mask = self.with_flag(mask, name, on)
+        for name, on in changes.items():
+            if on:
+                continue
+            for cleared in sorted(MODE_ACTION_CLEARS.get(name, frozenset())):
+                if changes.get(cleared):
+                    raise ValueError(
+                        f"{self.key}: turning {name} off also turns {cleared} off; "
+                        f"{cleared} cannot be turned on in the same write"
+                    )
+                if cleared in self._flags():
+                    mask = self.with_flag(mask, cleared, False)
+        return mask
 
     def _flags(self) -> Mapping[str, int]:
         if self.flags is None:
@@ -263,15 +302,16 @@ MODE_ACTION_LABELS: Final[Mapping[str, str]] = MappingProxyType(
         "station_alarm": "HomeBase alarm",
         "notification": "Notification",
         "privacy": "Privacy mode",
-        "motion_sensor_respond": "Motion sensor response",
+        "motion_sensor_respond": "React to motion",
         "report_monitor_center": "Monitoring center",
         "light_alarm": "Light alarm",
         "privacy_new": "Switch to privacy mode",
     }
 )
 """The display title of every action flag (:data:`~..p2p.mode_actions.ACTION_FLAGS`), in
-sentence case: the eufy app's title where it shows the action (``motion_sensor_respond``
-has none and is the library's)."""
+sentence case: the eufy app's title where it shows the action. A flag is on as the app's
+checkbox is ticked (``motion_sensor_respond``: ticked while its bit is clear, see
+:data:`~..p2p.mode_actions.MODE_ACTION_INVERTED`)."""
 
 
 def mode_action_label(flag: str) -> str:
@@ -346,7 +386,8 @@ MODE_TABLE_SETTINGS: Final[tuple[SettingDef, ...]] = (
                 "mode, so a non-zero write also moves every device whose delay is on"
             ),
             unit=SettingUnit.SECONDS,
-            value_range=(0, 300),
+            value_range=(MODE_DELAY_CHOICES[0], MODE_DELAY_CHOICES[-1]),
+            values=MODE_DELAY_CHOICES,
         )
         for table_field in _DELAY_DESCRIPTIONS
         for mode in sorted(MODE_TABLE_MODES, key=FIELD_PARAMS[table_field].__getitem__)

@@ -1,5 +1,11 @@
 """Device catalog: types and capabilities with their verification status, and per-model settings."""
 
+from ..p2p.mode_actions import (
+    MODE_ACTION_CLEARS,
+    MODE_ACTION_INVERTED,
+    MODE_DELAY_CHOICES,
+    mode_action_on,
+)
 from .capabilities import (
     FALLBACK_PROFILES,
     PROFILES,
@@ -68,8 +74,11 @@ __all__ = [
     "FALLBACK_PROFILES",
     "MODELS",
     "MODES_SECTION",
+    "MODE_ACTION_CLEARS",
     "MODE_ACTION_FLAGS",
+    "MODE_ACTION_INVERTED",
     "MODE_ACTION_LABELS",
+    "MODE_DELAY_CHOICES",
     "MOTION_SENSOR_DEVICE_TYPES",
     "ON_DEMAND_EVIDENCE",
     "ON_DEMAND_PREFIXES",
@@ -103,6 +112,7 @@ __all__ = [
     "mode_action_flags",
     "mode_action_key",
     "mode_action_label",
+    "mode_action_on",
     "mode_delay_key",
     "mode_table_params",
     "mode_table_storage",

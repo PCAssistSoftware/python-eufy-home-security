@@ -8,7 +8,7 @@ import contextlib
 import ipaddress
 import logging
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
@@ -106,7 +106,9 @@ from .exceptions import (
     DeviceBusyError,
     DeviceTimeoutError,
     EufySecurityError,
+    ModeInUseError,
     PresetSlotsFullError,
+    ProtocolError,
     RecordNotFoundError,
     StillNotWrittenError,
     UnsupportedError,
@@ -160,7 +162,9 @@ from .p2p.mode_actions import (
     MODE_TABLE_PARAMS,
     ModeTable,
     ModeTableField,
+    mode_action_on,
     mode_table_from_params,
+    require_mode_delay,
 )
 from .p2p.params import (
     ACTIVE_MODE_PARAM,
@@ -176,8 +180,37 @@ from .p2p.session import (
     SessionStats,
     StationSession,
 )
+from .p2p.station_config_codecs import (
+    CMD_CUSTOM_MODES,
+    CMD_SCHEDULE,
+    CMD_SCHEDULE_DEFAULT,
+    CUSTOM_MODES,
+    DEFAULT_MODE_ICON,
+    PARAM_TRACKING_CAMERAS,
+    PARAM_TRACKING_GROUPS,
+    CustomModes,
+    Schedule,
+    add_custom_mode,
+    decode_custom_modes,
+    decode_schedule,
+    decode_schedule_default,
+    decode_tracking_cameras,
+    decode_tracking_groups,
+    delete_custom_mode,
+    encode_schedule_default,
+    encode_tracking_cameras,
+    encode_tracking_groups,
+    modify_custom_mode,
+    require_custom_mode,
+)
 from .p2p.storage_info import CMD_STORAGE, StorageInfo, StorageQuery, storage_query
-from .station_config import StationConfig, build_station_config, changed_fields, check_revision
+from .station_config import (
+    ModeInfo,
+    StationConfig,
+    build_station_config,
+    changed_fields,
+    check_revision,
+)
 
 if TYPE_CHECKING:
     from .storage import SessionCache
@@ -189,6 +222,11 @@ READBACK_DELAY = 0.8
 
 MODE_TABLES_LOCK: Final = "mode_tables"
 """The shared parameter group of the per-mode action tables (:meth:`Station._shared_lock`)."""
+CROSS_CAMERA_LOCK: Final = "cross_camera"
+"""The shared parameter group of the cross-camera tracking cameras (1072) and groups (1073)."""
+MODE_LIST_LOCK: Final = "mode_list"
+"""The shared parameter group of the mode list (1256) and the schedule (1254, 1257), which
+names its modes."""
 
 CAMERA_IMAGE_DAYS = 7
 """Days of history :meth:`Station.async_camera_image` searches for a camera's newest event."""
@@ -1522,8 +1560,14 @@ class Station:
     # ── writes ───────────────────────────────────────────────────────────────
 
     async def async_set_guard_mode(self, mode: GuardMode | str | int) -> GuardMode | int:
-        """Arm/disarm; returns the mode the station reports it applied."""
-        return await self.session.async_set_guard_mode(GuardMode.parse(mode))
+        """Arm/disarm; returns the mode the station reports it applied.
+
+        Raises ``UnsupportedError`` before anything is sent for a custom mode the
+        station does not have while its mode list is known (:meth:`target_mode_name`).
+        """
+        guard = GuardMode.parse(mode)
+        self.target_mode_name(guard)
+        return await self.session.async_set_guard_mode(guard)
 
     async def async_set_setting(
         self,
@@ -1662,9 +1706,14 @@ class Station:
         ``changes`` maps a paired device's serial to ``{flag: on}`` for the flags of
         its kind (:func:`~.devices.settings.mode_action_flags`), for example
         ``{cam_sn: {"record": True, "camera_siren": False}, sensor_sn: {"notification":
-        True}}``. The delays follow the app's delay screen (one value per mode):
+        True}}``. A flag is on as the app's checkbox is ticked: ``motion_sensor_respond``
+        True clears its bit (:data:`~.p2p.mode_actions.MODE_ACTION_INVERTED`), and
+        turning it off also turns the sensor's ``notification`` and ``station_alarm`` off
+        in the same write, as the app does (:data:`~.p2p.mode_actions.MODE_ACTION_CLEARS`).
+        The delays follow the app's delay screen (one value per mode):
         ``entry_s`` / ``exit_s`` set the alarm (entry) / leaving (exit) delay of every
-        device that has it on afterwards (0 turns it off on all), and ``entry_devices``
+        device that has it on afterwards (0 turns it off on all), one of the app's
+        choices :data:`~.p2p.mode_actions.MODE_DELAY_CHOICES`, and ``entry_devices``
         / ``exit_devices`` turn it on or off per serial; see
         :meth:`~.p2p.mode_actions.ModeTable.with_count_down`.
 
@@ -1677,18 +1726,28 @@ class Station:
         ``expect_revision`` is checked against the configuration of the fresh read
         (:class:`~.exceptions.ConfigChangedError`, nothing sent, when it differs).
 
-        Raises, before anything is sent: ``UnsupportedError`` for a mode without
-        per-device actions (Schedule, Off, Disarmed, Geofence) or for which the station
-        stores no table, a serial not paired to this station, a device of no
+        Raises, before anything is sent: ``UnsupportedError`` when the station's mode
+        tables (for ``changes``) or delays are *unknown* (:meth:`config_support`), for a
+        mode without per-device actions (Schedule, Off, Disarmed, Geofence) or for which
+        the station stores no table, a serial not paired to this station, a device of no
         catalogued kind, a flag its kind does not have, a station with a device of no
         known kind in the table (it may be a siren accessory, whose triggers a library
         table clears) or delays the table cannot carry unchanged; ``ValueError`` for a
-        flag value that is not a bool or a delay change :meth:`with_count_down` refuses;
+        flag value that is not a bool, a flag turned on that a flag turned off in the
+        same edit clears, a delay that is not one of ``MODE_DELAY_CHOICES``, or a delay
+        change :meth:`with_count_down` refuses;
         :class:`CommandNotAppliedError` when a device is missing from the fresh read or
         does not report its mask. After sending: :class:`CommandNotAppliedError` naming
         the device and flag (or delay) the read-back does not show, and the session's
         typed errors.
         """
+        if changes:
+            self._require_feature(StationFeature.MODE_TABLES)
+        if any(v is not None for v in (entry_s, exit_s)) or entry_devices or exit_devices:
+            self._require_feature(StationFeature.MODE_DELAYS)
+        for what, seconds in (("entry_s", entry_s), ("exit_s", exit_s)):
+            if seconds is not None:
+                require_mode_delay(what, seconds)
         guard = GuardMode.parse(mode)
         if guard not in MODE_TABLE_MODES:
             raise UnsupportedError(f"guard mode {guard!r} has no per-device actions")
@@ -1699,7 +1758,7 @@ class Station:
             for flag, on in flags.items():
                 if not isinstance(on, bool):
                     raise ValueError(f"{flag}: on must be a bool, got {on!r}")
-                spec.with_flag(0, flag, on)  # refuses an unknown flag before any traffic
+            spec.with_flags(0, flags)  # refuses an unknown or clashing flag before any traffic
             edits.setdefault(channel, (spec, {}))[1].update(flags)
         count_downs = {
             ModeTableField.ALARM_DELAY: (entry_s, self._delay_channels(entry_devices)),
@@ -1744,11 +1803,411 @@ class Station:
             expect_revision=expect_revision,
         )
 
+    # ── station configuration writes ─────────────────────────────────────────
+
+    async def async_create_custom_mode(
+        self,
+        name: str,
+        *,
+        icon: int | None = None,
+        detail: str | None = None,
+        expect_revision: int | None = None,
+    ) -> ModeInfo:
+        """Add a custom mode named ``name`` in the first free of Custom 1-3; returns it.
+
+        ``icon`` is the app's ``iconType`` (0-7, default :data:`DEFAULT_MODE_ICON`),
+        ``detail`` the mode's description. The mode list (1256) is read fresh, the new
+        entry added and the whole list written (``operate_type`` 100); see
+        :meth:`_async_write_mode_list` for how it is confirmed. The new mode gets the
+        app's actions for an added mode (record and notification), and the station seeds
+        its device table: cameras record and notify, sensors notify, no delays.
+
+        Raises, before anything is sent: ``UnsupportedError`` when the station's custom
+        modes are *unknown* (:meth:`config_support`) or its mode list cannot be known;
+        ``ValueError`` (a message a UI can show) when all three custom modes exist, the
+        name is empty, longer than 30 characters or already used, or the icon or detail
+        is out of range; :class:`~.exceptions.ConfigChangedError` when ``expect_revision``
+        differs from the fresh read's.
+        """
+        self._require_feature(StationFeature.CUSTOM_MODES)
+        icon_type = DEFAULT_MODE_ICON if icon is None else icon
+        text = "" if detail is None else detail
+        add_custom_mode(None, account_id="", title=name, icon_type=icon_type, detail=text)
+        async with self._shared_lock(MODE_LIST_LOCK):
+            state, config = await self._config_for_write(expect_revision)
+            current = self._custom_modes(state, config)
+            doc = add_custom_mode(
+                current, account_id="", title=name, icon_type=icon_type, detail=text
+            )
+            await self._async_write_mode_list(doc)
+        return self._defined_mode(cast(GuardMode, doc.mode_id))
+
+    async def async_rename_custom_mode(
+        self,
+        mode: GuardMode | str | int,
+        name: str,
+        *,
+        icon: int | None = None,
+        expect_revision: int | None = None,
+    ) -> ModeInfo:
+        """Rename custom mode ``mode`` (and change its icon when ``icon`` is given);
+        returns it. One 1256 write (``operate_type`` 102) of the whole list, read fresh.
+
+        Raises before anything is sent: ``UnsupportedError`` as
+        :meth:`async_create_custom_mode`; ``ValueError`` for a built-in mode, a custom
+        mode the station does not have, or a name or icon the app refuses;
+        :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
+        """
+        self._require_feature(StationFeature.CUSTOM_MODES)
+        target = require_custom_mode(GuardMode.parse(mode), "rename")
+        add_custom_mode(
+            None, account_id="", title=name, icon_type=icon or 0, mode=target
+        )  # refuses a name or icon before any traffic
+        async with self._shared_lock(MODE_LIST_LOCK):
+            state, config = await self._config_for_write(expect_revision)
+            current = self._custom_modes(state, config)
+            if current is None:
+                raise ValueError(f"{target.label} does not exist")
+            doc = modify_custom_mode(current, target, account_id="", title=name, icon_type=icon)
+            await self._async_write_mode_list(doc)
+        return self._defined_mode(target)
+
+    async def async_delete_custom_mode(
+        self, mode: GuardMode | str | int, *, expect_revision: int | None = None
+    ) -> None:
+        """Delete custom mode ``mode``: one 1256 write (``operate_type`` 101) of the
+        whole list without it, read fresh.
+
+        Raises before anything is sent: ``UnsupportedError`` as
+        :meth:`async_create_custom_mode`; ``ValueError`` for a built-in mode or one the
+        station does not have; :class:`~.exceptions.ModeInUseError` (its ``reason`` a
+        sentence a UI can show) when the mode is the station's current mode or the one
+        in force, a schedule slot uses it or it is the schedule's mode outside every
+        slot; :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
+        """
+        self._require_feature(StationFeature.CUSTOM_MODES)
+        target = require_custom_mode(GuardMode.parse(mode), "delete")
+        async with self._shared_lock(MODE_LIST_LOCK):
+            state, config = await self._config_for_write(expect_revision)
+            current = self._custom_modes(state, config)
+            if current is None:
+                raise ValueError(f"{target.label} does not exist")
+            doc = delete_custom_mode(current, target, account_id="")
+            self._check_mode_unused(config, target)
+            await self._async_write_mode_list(doc)
+
+    @staticmethod
+    def _check_mode_unused(config: StationConfig, mode: GuardMode) -> None:
+        """:class:`~.exceptions.ModeInUseError` when ``config`` is in ``mode`` or its
+        schedule uses it."""
+        name = config.mode_name(mode)
+        if mode in (config.guard_mode, config.effective_mode):
+            raise ModeInUseError(
+                f"{name} is the station's current mode; switch to another mode before deleting it"
+            )
+        if config.schedule is not None and mode in config.schedule.modes():
+            raise ModeInUseError(
+                f"{name} is used by the schedule; remove it from the schedule first"
+            )
+        if config.schedule_default == mode:
+            raise ModeInUseError(
+                f"{name} is the schedule's mode outside its time slots; choose another one first"
+            )
+
+    async def async_set_schedule(
+        self,
+        schedule: Schedule,
+        *,
+        default_mode: GuardMode | str | int | None = None,
+        expect_revision: int | None = None,
+    ) -> tuple[Schedule | None, GuardMode | None]:
+        """Replace the weekly schedule (1254, whole) and, when ``default_mode`` is given
+        and differs, the mode outside every slot (1257); returns both as
+        :attr:`config` shows them after the write.
+
+        Build ``schedule`` from :class:`~.p2p.station_config_codecs.ScheduleSlot`
+        entries: their ``ValueError`` (an end before the start, overlapping slots, a mode
+        no slot can use) is the message a UI shows. The configuration is read fresh under the
+        station's mode-list lock; nothing is sent for a part that already holds the
+        value. The schedule goes as a JSON frame of type 1254, as the app sends it,
+        confirmed as :meth:`_async_confirm_param` says (a HomeBase 3's dump does not
+        carry it); the default as the app's scalar 1257 write, confirmed by the dump.
+        A schedule change is alarm-affecting while Schedule is the selected mode.
+
+        Raises before anything is sent: ``UnsupportedError`` when the schedule is
+        *unknown* on the station (:meth:`config_support`); ``ValueError`` for a
+        ``schedule`` that is not a :class:`Schedule`, a default no schedule can name, or
+        a slot or default whose mode the station does not have (a custom mode it does
+        not list); :class:`~.exceptions.ConfigChangedError` for a stale
+        ``expect_revision``.
+        """
+        self._require_feature(StationFeature.SCHEDULE)
+        if not isinstance(schedule, Schedule):
+            raise ValueError(f"a schedule must be a Schedule, got {schedule!r}")
+        default = None if default_mode is None else GuardMode.parse(default_mode)
+        if default is not None:
+            encode_schedule_default(default)
+        async with self._shared_lock(MODE_LIST_LOCK):
+            _, config = await self._config_for_write(expect_revision)
+            defined = [m.code for m in config.modes if isinstance(m.code, GuardMode)]
+            schedule.require_defined(defined)
+            if default is not None and default not in defined:
+                raise ValueError(
+                    f"the schedule default {default.label} is a mode the station does not have"
+                )
+            current = config.schedule
+            if current is None or current.slots != schedule.slots:
+
+                def holds(raw: str) -> bool:
+                    stored = decode_schedule(raw)
+                    return stored is not None and stored.slots == schedule.slots
+
+                await self._async_write_document(CMD_SCHEDULE, schedule, holds)
+            if default is not None and default != config.schedule_default:
+                await self.session.async_send_ecb_scalar(CMD_SCHEDULE_DEFAULT, int(default))
+                await self._async_confirm_param(
+                    CMD_SCHEDULE_DEFAULT,
+                    str(int(default)),
+                    lambda raw: decode_schedule_default(raw) == default,
+                    answered=True,
+                )
+        after = self.config
+        if after is None:  # pragma: no cover - a write leaves a state
+            return schedule, default
+        return after.schedule, after.schedule_default
+
+    async def async_set_cross_camera_cameras(
+        self, serials: Iterable[str] | None, *, expect_revision: int | None = None
+    ) -> tuple[str, ...]:
+        """Choose the cameras cross-camera tracking follows (1072); ``None`` chooses every
+        camera of the station. Returns the choice :attr:`config` shows after the write.
+
+        One write of the whole list (a 1350 sub-command whose payload is the list, as
+        the app's handler sends it), read fresh under the station's cross-camera lock
+        and confirmed by the parameter dump; nothing is sent when the station already
+        holds the choice. The tracking switches (1065, 1069, 1070) are settings
+        (:attr:`~.station_config.StationConfig.setting_keys`).
+
+        Raises before anything is sent: ``UnsupportedError`` when cross-camera tracking
+        is *unknown* on the station or a serial is not a camera paired to it (a sensor,
+        another station's camera); ``ValueError`` for an empty choice or a serial listed
+        twice; :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
+        """
+        self._require_feature(StationFeature.CROSS_CAMERA)
+        if serials is None:
+            chosen = tuple(
+                d.device_sn for d in self.sub_devices if self._is_own_camera(d.device_sn)
+            )
+            if not chosen:
+                raise UnsupportedError(f"{self._log_name} has no paired camera")
+        else:
+            chosen = self._own_cameras(serials, "tracking cameras")
+            if not chosen:
+                raise ValueError("choose at least one camera; None chooses every camera")
+        value = encode_tracking_cameras(chosen)
+        async with self._shared_lock(CROSS_CAMERA_LOCK):
+            _, config = await self._config_for_write(expect_revision)
+            if config.cross_camera is None or config.cross_camera.cameras != chosen:
+                await self._async_write_list(
+                    PARAM_TRACKING_CAMERAS,
+                    list(chosen),
+                    value,
+                    lambda raw: decode_tracking_cameras(raw) == chosen,
+                )
+        after = self.config
+        cross = after.cross_camera if after is not None else None
+        return cross.cameras if cross is not None and cross.cameras is not None else chosen
+
+    async def async_set_cross_camera_groups(
+        self, groups: Iterable[Iterable[str]], *, expect_revision: int | None = None
+    ) -> tuple[tuple[str, ...], ...]:
+        """Replace the cross-camera tracking groups (1073), each a list of camera
+        serials; returns the groups :attr:`config` shows after the write. Written and
+        confirmed as :meth:`async_set_cross_camera_cameras` (``[{"value": [serial,
+        ...]}, ...]``); ``[]`` removes every group.
+
+        Raises before anything is sent: ``UnsupportedError`` when tracking groups are
+        *unknown* on the station or a serial is not a camera paired to it;
+        ``ValueError`` for an empty group or a camera listed twice (in one group or in
+        two); :class:`~.exceptions.ConfigChangedError` for a stale ``expect_revision``.
+        """
+        self._require_feature(StationFeature.CROSS_CAMERA_GROUPS)
+        if isinstance(groups, str):
+            raise ValueError("tracking groups must be a list of serial lists")
+        chosen = tuple(self._own_cameras(group, "a tracking group") for group in groups)
+        members = [serial for group in chosen for serial in group]
+        if any(not group for group in chosen):
+            raise ValueError("a tracking group needs at least one camera")
+        if len(set(members)) != len(members):
+            raise ValueError("a camera can be in one tracking group only")
+        value = encode_tracking_groups(chosen)
+        async with self._shared_lock(CROSS_CAMERA_LOCK):
+            _, config = await self._config_for_write(expect_revision)
+            if config.cross_camera is None or config.cross_camera.groups != chosen:
+                await self._async_write_list(
+                    PARAM_TRACKING_GROUPS,
+                    [{"value": list(group)} for group in chosen],
+                    value,
+                    lambda raw: decode_tracking_groups(raw) == chosen,
+                )
+        after = self.config
+        cross = after.cross_camera if after is not None else None
+        return cross.groups if cross is not None else chosen
+
+    def _own_cameras(self, serials: Iterable[str], what: str) -> tuple[str, ...]:
+        """``serials`` checked as distinct cameras paired to this station."""
+        if isinstance(serials, str):
+            raise ValueError(f"{what} must be a list of serials, not one string")
+        out = tuple(serials)
+        encode_tracking_cameras(out)  # refuses an empty or repeated serial
+        for serial in out:
+            if not self._is_own_camera(serial):
+                raise UnsupportedError(
+                    f"{redact_serial(serial)} is not a camera paired to {self._log_name}"
+                )
+        return out
+
+    def _is_own_camera(self, serial: str) -> bool:
+        model = model_for_serial(serial)
+        return (
+            any(d.device_sn == serial for d in self.sub_devices)
+            and model is not None
+            and model.kind is DeviceKind.CAMERA
+        )
+
+    async def _async_write_list(
+        self, param: int, payload: list[Any], stored: str, holds: Callable[[str], bool]
+    ) -> None:
+        """Send ``payload`` as the 1350 sub-command ``param`` (the handler's ``param_list``)
+        and confirm it (:meth:`_async_confirm_param`; ``stored`` is its param value)."""
+        outcome = await self.session.async_send_command(param, payload=payload)
+        await self._async_confirm_param(
+            param, stored, holds, answered=outcome is CommandOutcome.APPLIED
+        )
+
+    def target_mode_name(self, mode: GuardMode) -> str | None:
+        """The name this station gives ``mode``, for a write that targets it (the guard
+        mode, an arming-group member); None while its mode list is not known (no
+        state yet, or no source carries the list).
+
+        Raises ``UnsupportedError`` for a custom mode the known list does not define.
+        """
+        config = self.config
+        if config is None or config.sources.get("modes") in (None, ValueSource.APP_DEFAULT):
+            return None
+        if mode in CUSTOM_MODES and not config.is_defined(mode):
+            have = ", ".join(m.name for m in config.modes if m.custom) or "none"
+            raise UnsupportedError(
+                f"{self._log_name} has no {mode.label} (its custom modes: {have})"
+            )
+        return config.mode_name(mode)
+
+    def _require_feature(self, feature: StationFeature) -> None:
+        """``UnsupportedError`` when ``feature`` is *unknown* on this station."""
+        evidence = self.config_support(feature)
+        if evidence.support is Support.UNKNOWN:
+            raise UnsupportedError(f"{feature.value} is not supported here: {evidence.source}")
+
+    async def _config_for_write(
+        self, expect_revision: int | None
+    ) -> tuple[StationState, StationConfig]:
+        """A fresh read and its configuration, checked against ``expect_revision``
+        (:class:`~.exceptions.ConfigChangedError`, nothing sent, when it differs)."""
+        state = await self.async_update(wake=True)
+        config = build_station_config(state)
+        check_revision(config, expect_revision)
+        return state, config
+
+    def _custom_modes(self, state: StationState, config: StationConfig) -> CustomModes | None:
+        """The mode list (1256) a write starts from; None when the station has none.
+
+        ``UnsupportedError`` when the list does not decode, or when no source carries
+        it and the station has no cloud copy: the list may exist where the library cannot
+        see it, and a write would replace it.
+        """
+        if (problem := config.unreadable.get("modes")) is not None:
+            raise UnsupportedError(f"the station's mode list cannot be read: {problem}")
+        raw = state.setting_params.get(CMD_CUSTOM_MODES)
+        if raw is None and not self.has_cloud_copy:
+            raise UnsupportedError(
+                "the station's mode list is not known yet (its parameter dump does not "
+                "carry it); read the configuration with refresh first"
+            )
+        return decode_custom_modes(raw)
+
+    async def _async_write_mode_list(self, doc: CustomModes) -> None:
+        """Send mode list ``doc`` (frame 1256) and confirm it (:meth:`_async_confirm_param`)."""
+
+        def holds(raw: str) -> bool:
+            stored = decode_custom_modes(raw)
+            return stored is not None and stored.modes == doc.modes
+
+        await self._async_write_document(CMD_CUSTOM_MODES, doc, holds)
+
+    async def _async_write_document(
+        self, command: int, doc: CustomModes | Schedule, holds: Callable[[str], bool]
+    ) -> None:
+        """Send ``doc`` with the owner's account id as a JSON frame of type ``command``
+        (the param it sets) and confirm it (:meth:`_async_confirm_param`)."""
+        sent: list[CustomModes | Schedule] = []
+
+        def body(account: str) -> bytes:
+            sent.append(replace(doc, account_id=account))
+            return sent[-1].body()
+
+        receipted = await self.session.async_send_json_frame(command, body)
+        await self._async_confirm_param(command, sent[-1].param_value(), holds, receipted)
+
+    async def _async_confirm_param(
+        self, param: int, stored: str, holds: Callable[[str], bool], answered: bool
+    ) -> None:
+        """Confirm a write of the station's own ``param`` and show it in :attr:`state`.
+
+        Where a fresh parameter dump carries ``param``, it must hold the write
+        (``holds``) within :data:`READBACK_ATTEMPTS` reads. Where the dump does not carry
+        it (a HomeBase 3's mode list and schedule live in the cloud's copy), the station's
+        own answer to the write (``answered``: a zero receipt or result) is all that
+        confirms it, and ``stored`` is filed as this library's own write, which
+        :attr:`state` shows until the cloud copy changes after it. Raises
+        :class:`CommandNotAppliedError` when neither confirms the write.
+        """
+        for attempt in range(READBACK_ATTEMPTS):
+            raw = (await self.session.async_get_params()).station.get(param)
+            if raw is None:
+                break
+            with contextlib.suppress(ProtocolError):
+                if holds(raw):
+                    return
+            if attempt + 1 < READBACK_ATTEMPTS:
+                await asyncio.sleep(READBACK_DELAY)
+        else:
+            raise CommandNotAppliedError(
+                param, f"param {param} not confirmed: the station reports another value"
+            )
+        if not answered:
+            raise CommandNotAppliedError(
+                param,
+                f"the station acknowledged command {param} without answering it, and its "
+                "parameter dump does not carry it: nothing confirms the write",
+            )
+        self.session.apply_local_params(STATION_CHANNEL, {param: stored})
+
+    def _defined_mode(self, mode: GuardMode) -> ModeInfo:
+        """``mode`` as :attr:`config` lists it after a write."""
+        config = self.config
+        info = config.mode(mode) if config is not None else None
+        if info is None:
+            raise CommandNotAppliedError(
+                CMD_CUSTOM_MODES, f"{mode.label} is not listed after the write"
+            )
+        return info
+
     @staticmethod
     def _with_flags(
         table: ModeTable, edits: Mapping[int, tuple[SettingDef, Mapping[str, bool]]]
     ) -> ModeTable:
-        """``table`` with each channel's flags set or cleared, every other bit kept;
+        """``table`` with each channel's flags turned on or off (:meth:`SettingDef.with_flags`:
+        with the flags a flag turned off clears), every other bit kept;
         :class:`CommandNotAppliedError` when a channel's current mask is not in it."""
         for channel, (spec, flags) in sorted(edits.items()):
             mask = table.actions.get(channel)
@@ -1758,9 +2217,7 @@ class Station:
                     f"{spec.key}: the station does not report the current mask on channel "
                     f"{channel}; refusing to write a whole mask blind",
                 )
-            for flag, on in flags.items():
-                mask = spec.with_flag(mask, flag, on)
-            table = table.with_action(channel, mask)
+            table = table.with_action(channel, spec.with_flags(mask, flags))
         return table
 
     def _delay_channels(self, devices: Mapping[str, bool] | None) -> dict[int, bool]:
@@ -1876,7 +2333,9 @@ class Station:
                 )
                 for flag, bit in flags.items():
                     if (want ^ got) & bit:
-                        wrote, reads = ("on", "off") if want & bit else ("off", "on")
+                        wrote, reads = (
+                            ("on", "off") if mode_action_on(flag, want) else ("off", "on")
+                        )
                         problems.append(f"{name} {flag}: wrote {wrote}, station reports {reads}")
                 named = 0
                 for bit in flags.values():
@@ -1902,8 +2361,11 @@ class Station:
         The setting is the device kind's ``<kind>_action_<mode>`` (``camera_action_away``),
         whose ``flags`` name the actions. The current mask is read fresh, one bit is
         changed with every other bit kept, and the mode table is written and confirmed by
-        read-back; nothing is written when the flag is already as asked. A library write
-        of the mask is proven on hardware; the flag names come from the app and are not.
+        read-back; nothing is written when the flag is already as asked. Turning
+        ``motion_sensor_respond`` off also turns ``notification`` and ``station_alarm``
+        off (see :meth:`async_set_mode_actions`). A library write of the mask is proven
+        on hardware; of the flag names, ``record``, ``notification`` and
+        ``motion_sensor_respond`` are checked against the app display.
 
         Raises ``UnsupportedError`` for a mode without per-device actions (Schedule,
         Off, Disarmed, Geofence), a device whose kind is unknown or has no catalogued

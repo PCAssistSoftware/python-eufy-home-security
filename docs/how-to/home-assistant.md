@@ -873,14 +873,22 @@ A closed session (`async_close`) never reconnects on its own — build a new
   `light_alarm`, `report_monitor_center`; sensor: `notification`, `station_alarm`,
   `report_monitor_center`, and `motion_sensor_respond` on a motion sensor only, cloud
   `device_type` 10 or 127; `async_set_mode_action` refuses a flag the device does not
-  have). A siren accessory is of kind `other`, not `sensor`. One switch per (mode, flag), for
+  have). A flag is on as the app's checkbox is ticked: `motion_sensor_respond` is the
+  app's "React to motion", on while its bit (32) is **clear** (`MODE_ACTION_INVERTED`);
+  read a switch with `mode_action_on(flag, mask)`, never `mask & bit`. Turning it off
+  sets the bit and, as the app does, also turns that sensor's `notification` and
+  `station_alarm` off in the same write (`MODE_ACTION_CLEARS`); turning it on again
+  restores neither, so refresh those switches after a write. A siren accessory is of kind `other`, not `sensor`. One switch per (mode, flag), for
   example "Front · Away · camera siren", written with
   `station.async_set_mode_action("away", "camera_siren", on, device_sn=…)`: it reads the
   current mask fresh, changes that one bit, writes and confirms by read-back. **Never
   write a whole mask from Home Assistant state**: the bits without a name are mode bits,
   and a raw write clears them. The alarm and leaving delays (`alarm_delay_<mode>`,
-  `leaving_delay_<mode>`, `RANGE` in seconds) are `number` entities on every camera and
-  sensor, written with `async_set_setting`. These settings are not in the model files:
+  `leaving_delay_<mode>`, `RANGE` 0–300 s) are `number` entities on every camera and
+  sensor, written with `async_set_setting`. They take only the app's choices,
+  `setting.values` = `MODE_DELAY_CHOICES` (0, 15, 30, 45, 60, 180, 300 s): any other
+  value is a `ValueError` before anything is sent, so offer those (a select, or a number
+  that snaps to them). These settings are not in the model files:
   the library writes them through the station's mode tables. The table write is proven
   on hardware; the flag names come from the app.
 
@@ -925,10 +933,13 @@ A closed session (`async_close`) never reconnects on its own — build a new
   table is returned). Refused before anything is sent: a serial not paired to the
   station or a flag its kind does not have (`UnsupportedError`), a mode without
   per-device actions or one the station stores no table for (an undefined custom mode),
-  the unknown-kind and delay cases above, a flag value that is not a bool and a device
-  turned on with no delay value to take (`ValueError`). A read-back that does not show
+  the unknown-kind and delay cases above, a flag value that is not a bool, an `entry_s`
+  or `exit_s` outside `MODE_DELAY_CHOICES` and a device turned on with no delay value to
+  take (`ValueError`). A read-back that does not show
   the table raises `CommandNotAppliedError` naming the device and flag (`… camera_siren:
-  wrote on, station reports off`). `expect_revision` is checked against the revision of
+  wrote on, station reports off`). Turning `motion_sensor_respond` off clears the
+  sensor's `notification` and `station_alarm` too, and asking for either on in the same
+  edit is a `ValueError`. `expect_revision` is checked against the revision of
   the configuration the fresh read gives (`ConfigChangedError`, nothing sent, when it
   differs; see [Station configuration](#station-configuration)).
 
@@ -943,7 +954,7 @@ A closed session (`async_close`) never reconnects on its own — build a new
   | `station_alarm` | HomeBase alarm |
   | `notification` | Notification |
   | `privacy` | Privacy mode |
-  | `motion_sensor_respond` | Motion sensor response |
+  | `motion_sensor_respond` | React to motion |
   | `report_monitor_center` | Monitoring center |
   | `light_alarm` | Light alarm |
   | `privacy_new` | Switch to privacy mode |
@@ -1065,8 +1076,9 @@ For the integration this means:
   show each value by its label; do not ship translations of vendor keys.
 - **Import the types from the package root:** `Setting`, `SettingKind`, `SettingControl`,
   `SettingUnit`, `CommandOutcome` and `SettingsCoverage` are exported there; capability grades
-  (`Capability`, `Support`, `profile_for_serial`), `MODE_ACTION_FLAGS` and
-  `MODE_ACTION_LABELS` from `eufy_home_security.devices`.
+  (`Capability`, `Support`, `profile_for_serial`), `MODE_ACTION_FLAGS`,
+  `MODE_ACTION_LABELS`, `MODE_ACTION_INVERTED`, `MODE_ACTION_CLEARS` and `mode_action_on`
+  from `eufy_home_security.devices`.
 
 `setting.name` is the eufy app's own title where the app has one (`Clip length`,
 `Intervals between triggers`, `Working mode` on a T8160), else a title made from the key;
@@ -2134,8 +2146,10 @@ await eufy.async_delete_arming_group(group.group_id)
   or already used in the house, no member, or a mode that cannot be written
   (`GuardMode.OFF`, an unknown code): `ValueError`, before any request for the name and
   the modes. A member that is not a station or standalone device of the house (a paired
-  camera, say), or a 21st group: `UnsupportedError`. The library does not read a
-  station's defined custom modes, so every writable `GuardMode` is accepted.
+  camera, say), a 21st group, or a custom mode a member's station does not have while
+  that station's mode list is known (`Station.target_mode_name`): `UnsupportedError`.
+  Each member's `mode` title is its station's name for the mode (a custom mode's own
+  title) where the station's list is known.
 - **Activation changes the alarm state** of every member: offer it as a button or a
   service action the user presses, never from an automation the integration starts by
   itself. The activation is recorded in the cloud first; if that fails it raises and no
@@ -2150,6 +2164,12 @@ await eufy.async_delete_arming_group(group.group_id)
   as `GuardModeChanged` like any other.
 - **Status.** `ArmingGroup.active` is the cloud's flag for the last activated group; whether
   a group is in effect is better read from the members' own guard modes.
+- **Logs.** `ArmingGroupLog.create_time` is the cloud's epoch seconds;
+  `ArmingGroupLog.created_at` is the same as an aware UTC `datetime`. `user_name` is the
+  name an activation was recorded under: the library sends the account's nickname, as
+  the app does (the login answer's `nick_name`, kept with the cached session;
+  `EufyCloudApi.activation_user_name`), and the e-mail's local part until a login gave
+  one. The members' guard-mode writes still carry the e-mail's local part.
 
 ### Station configuration
 
@@ -2179,15 +2199,18 @@ station.config  # the same, built from the current state, no I/O
     station reports one as its mode;
   - Schedule when the schedule has a slot or Schedule is selected;
   - Geofencing while it is selected and Off while the station reports it: the library
-    cannot tell whether a station offers either otherwise.
+    cannot tell whether a station offers either otherwise. The eufy app shows a
+    Geofencing tile among its modes all the time, but geofencing follows the phones
+    running the app, which Home Assistant cannot do, so it is never in `settable_modes`.
 
   A mode outside `modes` does not exist on the station: mark its per-mode entities
   unavailable (or do not create them) instead of showing `unknown`. Without a mode list
   from either source (`config.sources["modes"]` is `APP_DEFAULT`) only the built-in modes
   are listed; the client's cloud refresh fills it in.
 - **Setting a mode.** `async_set_guard_mode` writes every mode in `settable_modes`: the
-  defined modes except Off, which is report-only. A custom mode is written through 1224
-  like a built-in one.
+  defined modes except Off, which is report-only, and Geofencing. A custom mode is written through 1224
+  like a built-in one; one the station does not have is refused (`UnsupportedError`,
+  nothing sent) while its mode list is known, and sent as asked while it is not.
 - **Names.** `ModeInfo.name` is the display name. For a code alone, `GuardMode.label` (or
   `guard_mode_label(code)`, which also names an unknown code) gives the sentence-case
   label: Away, Home, Schedule, Custom 1-3, Off, Geofencing, Disarmed.
@@ -2214,6 +2237,59 @@ station.config  # the same, built from the current state, no I/O
   configuration, so a card shows it and asks the user to redo the edit. `ModeInUseError`
   (an `UnsupportedError`) refuses a change to a mode that is in use; its `reason` is a
   sentence a UI can show.
+
+#### Changing the configuration
+
+```python
+info = await station.async_create_custom_mode("Garden", icon=3, expect_revision=rev)
+info = await station.async_rename_custom_mode(GuardMode.CUSTOM_2, "Yard")  # ModeInfo
+await station.async_delete_custom_mode("custom_2")
+schedule = Schedule(
+    account_id=None,
+    slots=(ScheduleSlot(Weekday.MONDAY, time(8), time(17), GuardMode.AWAY),),
+)  # from eufy_home_security.p2p.station_config_codecs
+slots, default = await station.async_set_schedule(schedule, default_mode=GuardMode.DISARMED)
+await station.async_set_cross_camera_cameras([cam_sn, other_sn])  # None: every camera
+await station.async_set_cross_camera_groups([[cam_sn, other_sn]])  # []: no group
+await station.async_set_mode_actions("away", {cam_sn: {"camera_siren": True}})
+```
+
+- **What is sent.** Each call reads the station fresh, changes the one object and writes
+  it whole: the mode list (1256: add, rename or delete), the schedule (1254) and, when
+  it changes, the mode outside its slots (1257), the tracking cameras (1072) or groups
+  (1073), a mode table (1255). Nothing is sent for a value the station already holds.
+  Writes of one object are serialised per station, so two concurrent edits keep each
+  other's changes. On a HomeBase 3 (T8030) each is verified: written, confirmed, checked
+  in the eufy app and restored (the 1257 default and the tracking switches aside); on
+  other models they are declared from the eufy app (`config_support` grades them).
+- **A new custom mode.** The station seeds its device table: every camera records and
+  notifies, every sensor notifies (a motion sensor also reacts to motion), no delays;
+  change them with `async_set_mode_actions`. `icon` is the app's `iconType` 0-7; the
+  default 7 (`DEFAULT_MODE_ICON`) shows as the app's sliders ("customize") icon.
+- **Refused before sending.** `UnsupportedError` when `config_support` of the call's
+  feature is `UNKNOWN`, for a serial that is not a camera paired to the station (a
+  sensor, another station's camera), for a mode list that cannot be read or that no
+  source carries yet (a station without a cloud copy: refresh first). `ValueError`, with
+  a message a card can show: a mode name that is empty, over 30 characters or already
+  used, an icon outside 0-7, a fourth custom mode, a built-in or missing mode to rename
+  or delete, a schedule slot or default whose mode the station does not have, an empty
+  camera choice or group, a camera listed twice. A schedule's own rules (start before
+  end, no overlap) raise their `ValueError` when the `ScheduleSlot` / `Schedule` is
+  built. `ModeInUseError` (`reason`) for deleting the current mode or one the schedule
+  uses. `ConfigChangedError` for a stale `expect_revision`.
+- **`expect_revision`.** Pass the `revision` of the configuration the user edited; the
+  call compares it with the fresh read it writes from. On `ConfigChangedError` show
+  `err.config` and let the user redo the edit.
+- **Confirmed, then shown.** A write counts only when the station confirms it. Where its
+  parameter dump carries the value (1072, 1073, 1257, the mode tables), a fresh dump must
+  show it (`CommandNotAppliedError` otherwise). A HomeBase 3's dump carries neither the
+  mode list nor the schedule: there the station's zero receipt confirms it, and
+  `station.config` shows the written value at once (source `P2P`) until the cloud's copy
+  changes after the write; the next cloud refresh then carries it.
+- **Ask first.** `StationFeature.alarm_affecting` names the writes that change how the
+  station alarms (schedule, mode tables and delays, guard mode): confirm those with the
+  user. The bulk mode-table write is refused when `MODE_TABLES` (or, for delays,
+  `MODE_DELAYS`) is `UNKNOWN`.
 
 ### Station configuration support
 
@@ -2269,7 +2345,7 @@ The library raises typed errors; translate them at the coordinator / setup bound
 | `StillNotWrittenError` (a `RecordNotFoundError`; `offset`) | the device has not written the event's row or still yet: keep what is shown and ask once more later (about 20 s). A plain `RecordNotFoundError` is final for that event: no retry |
 | `CaptureStoppedError` | a live capture's `stop` was set before its first keyframe: nothing was recorded, nothing to store. Not an error for the user who pressed stop |
 | `ConfigChangedError` (`config`, `expected`) | a write's `expect_revision` is stale: the station's configuration changed elsewhere and nothing was sent. Show `err.config` and let the user redo the edit; not an outage |
-| `ModeInUseError` (an `UnsupportedError`; `reason`) | the mode is in use (current, or named by the schedule); nothing was sent. `raise HomeAssistantError` with `reason` |
+| `ModeInUseError` (an `UnsupportedError`; `reason`) | the mode is in use (current, or named by the schedule or its default); nothing was sent. `raise HomeAssistantError` with `reason` |
 | `KeyExchangeRefusedError` (a `CloudApiError`; `code` 4404 or 463, `status` 463) | the cloud gateway refused the client's key identity and a new key exchange did not restore it. Not a reauth and not a kick-out: no login was attempted and none helps by itself. Carry on from the cache and retry on the next interval; the library re-keys at each attempt. Raise a repair issue only if it persists (hours) |
 
 Errors that happen in the background (a key or owner-id refresh inside a running session,

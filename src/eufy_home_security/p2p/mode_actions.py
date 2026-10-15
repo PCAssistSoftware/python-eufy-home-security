@@ -139,7 +139,7 @@ ACTION_FLAGS: Final[Mapping[str, int]] = MappingProxyType(
         "station_alarm": 4,  # BIT_STATION_ALARM (= BIT_SENSOR_STATION_ALARM)
         "notification": 8,  # BIT_NOTIFICATION (= BIT_SENSOR_NOTIFICATION)
         "privacy": 16,  # BIT_PRAVACY_ON
-        "motion_sensor_respond": 32,  # BIT_MOTION_SENSOR_RESPOND
+        "motion_sensor_respond": 32,  # BIT_MOTION_SENSOR_RESPOND, inverted: set = ignore
         "report_monitor_center": 64,  # BIT_REPORT_MONITOR_CENTER
         "light_alarm": 128,  # BIT_LIGHT_ALARM
         "privacy_new": 256,  # BIT_PRIVACY_ON_NEW
@@ -147,7 +147,47 @@ ACTION_FLAGS: Final[Mapping[str, int]] = MappingProxyType(
 )
 """The action bits, named after the eufy app ``DeviceParam.BIT_*`` constants. Which of them
 apply to a device depends on its type (``ArmingManager.g``);
-:data:`~..devices.settings.MODE_ACTION_FLAGS` names those per device scope."""
+:data:`~..devices.settings.MODE_ACTION_FLAGS` names those per device scope. A flag of
+:data:`MODE_ACTION_INVERTED` is on while its bit is clear (:func:`mode_action_on`)."""
+
+MODE_ACTION_INVERTED: Final[frozenset[str]] = frozenset({"motion_sensor_respond"})
+"""The flags that are on while their bit is *clear*. ``motion_sensor_respond``: a motion
+sensor reacts to motion (the app's "React to motion" ticked) while bit 32 is clear, and
+ignores it while the bit is set. Verified on a T8910 behind a HomeBase 3 (app display)."""
+
+MODE_ACTION_CLEARS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {"motion_sensor_respond": frozenset({"notification", "station_alarm"})}
+)
+"""Flag → the flags turning it off also turns off in the same write, as the eufy app
+does: a motion sensor set to ignore motion loses its notification and HomeBase alarm.
+Turning the flag back on restores nothing."""
+
+
+def mode_action_on(flag: str, mask: int) -> bool:
+    """Whether action ``flag`` is on in ``mask``: its bit set, or clear for a flag of
+    :data:`MODE_ACTION_INVERTED`. ``KeyError`` for a name :data:`ACTION_FLAGS` lacks."""
+    return bool(mask & ACTION_FLAGS[flag]) is not (flag in MODE_ACTION_INVERTED)
+
+
+def mode_action_bits(flag: str, mask: int, on: bool) -> int:
+    """``mask`` with action ``flag`` turned on or off (inversion applied), every other bit
+    kept. ``KeyError`` for a name :data:`ACTION_FLAGS` lacks."""
+    bit = ACTION_FLAGS[flag]
+    return mask | bit if on is not (flag in MODE_ACTION_INVERTED) else mask & ~bit
+
+
+MODE_DELAY_CHOICES: Final[tuple[int, ...]] = (0, 15, 30, 45, 60, 180, 300)
+"""The alarm (entry) and leaving (exit) delays the eufy app offers, in seconds (0 is
+off); a library write refuses any other value."""
+
+
+def require_mode_delay(what: str, seconds: object) -> int:
+    """``seconds`` when it is one of :data:`MODE_DELAY_CHOICES`, else ``ValueError``."""
+    if isinstance(seconds, bool) or seconds not in MODE_DELAY_CHOICES:
+        choices = ", ".join(map(str, MODE_DELAY_CHOICES))
+        raise ValueError(f"{what} must be one of {choices} s (the app's choices), got {seconds!r}")
+    return seconds
+
 
 _DELAY_KEYS: Final[Mapping[ModeTableField, str]] = MappingProxyType(
     {

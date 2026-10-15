@@ -1464,7 +1464,7 @@ async def test_a_matrix_edit_is_one_table_write(station: Station, fake: FakeStat
             "account_id": SYNTHETIC.account_id,
             "mode_id": 0,
             "devices": [
-                {"device_channel": 16, "action": 44},
+                {"device_channel": 16, "action": 12},
                 {"device_channel": 0, "action": 10},
             ],
             "count_down_alarm": {"channel_list": [0], "delay_time": 30},
@@ -1475,15 +1475,45 @@ async def test_a_matrix_edit_is_one_table_write(station: Station, fake: FakeStat
             ],
         }
     ]
-    assert table.actions == {0: 10, 16: 44}
-    assert (fake.params[0][1239], fake.params[16][1239], fake.params[0][1167]) == ("10", "44", "30")
+    assert table.actions == {0: 10, 16: 12}
+    assert (fake.params[0][1239], fake.params[16][1239], fake.params[0][1167]) == ("10", "12", "30")
     # The same edit again, and an empty one: read, nothing written.
     again = await hub.async_set_mode_actions(
         "away", {SYNTHETIC.camera_sn: {"camera_siren": True}}, entry_s=30
     )
-    assert again.actions == {0: 10, 16: 44}
-    assert (await hub.async_set_mode_actions(GuardMode.AWAY, {})).actions == {0: 10, 16: 44}
+    assert again.actions == {0: 10, 16: 12}
+    assert (await hub.async_set_mode_actions(GuardMode.AWAY, {})).actions == {0: 10, 16: 12}
     assert len(fake.mode_tables_received) == 1
+
+
+async def test_ignoring_motion_clears_the_sensor_s_notification_and_alarm(
+    station: Station, fake: FakeStation
+) -> None:
+    """Unticking "React to motion" sets bit 32 and, as the app does, clears notification
+    and HomeBase alarm in the same table write; ticking it again restores nothing."""
+    _mode_table_blocks(fake)
+    fake.params[16][1239] = "76"  # notification, HomeBase alarm, monitoring center
+    hub = _matrix_hub(station)
+    table = await hub.async_set_mode_actions("away", {SENSOR_SN: {"motion_sensor_respond": False}})
+    assert table.actions[16] == 96
+    assert fake.mode_tables_received[-1]["devices"][0] == {"device_channel": 16, "action": 96}
+    assert fake.params[16][1239] == "96"
+    mask = await hub.async_set_mode_action(
+        "away", "motion_sensor_respond", True, device_sn=SENSOR_SN
+    )
+    assert mask == 64
+    assert len(fake.mode_tables_received) == 2
+
+
+async def test_a_flag_the_ignore_bit_clears_cannot_be_turned_on_with_it(
+    station: Station, fake: FakeStation
+) -> None:
+    _mode_table_blocks(fake)
+    hub = _matrix_hub(station)
+    edit = {SENSOR_SN: {"motion_sensor_respond": False, "notification": True}}
+    with pytest.raises(ValueError, match="also turns notification off"):
+        await hub.async_set_mode_actions("away", edit)
+    assert fake.mode_tables_received == []
 
 
 async def test_mode_delays_alone_are_one_table_write(station: Station, fake: FakeStation) -> None:
@@ -1493,7 +1523,7 @@ async def test_mode_delays_alone_are_one_table_write(station: Station, fake: Fak
         "home",
         entry_s=45,
         entry_devices={SENSOR_SN: False},
-        exit_s=20,
+        exit_s=15,
         exit_devices={SYNTHETIC.camera_sn: True},
     )
     assert fake.mode_tables_received[-1]["count_down_alarm"] == {
@@ -1502,11 +1532,28 @@ async def test_mode_delays_alone_are_one_table_write(station: Station, fake: Fak
     }
     assert fake.mode_tables_received[-1]["count_down_arm"] == {
         "channel_list": [0],
-        "delay_time": 20,
+        "delay_time": 15,
     }
-    assert (table.alarm_delays, table.leaving_delays) == ({0: 45, 16: 0}, {0: 20, 16: 0})
-    assert (fake.params[0][1166], fake.params[16][1166], fake.params[0][1171]) == ("45", "0", "20")
+    assert (table.alarm_delays, table.leaving_delays) == ({0: 45, 16: 0}, {0: 15, 16: 0})
+    assert (fake.params[0][1166], fake.params[16][1166], fake.params[0][1171]) == ("45", "0", "15")
     assert len(fake.mode_tables_received) == 1
+
+
+@pytest.mark.parametrize("seconds", [20, 301, -15, 600, True])
+async def test_a_delay_the_app_does_not_offer_is_refused(
+    station: Station, fake: FakeStation, seconds: int
+) -> None:
+    _mode_table_blocks(fake)
+    hub = _matrix_hub(station)
+    with pytest.raises(ValueError, match="entry_s must be one of 0, 15, 30, 45, 60, 180, 300 s"):
+        await hub.async_set_mode_actions(
+            "away", {SYNTHETIC.camera_sn: {"record": True}}, entry_s=seconds
+        )
+    with pytest.raises(ValueError, match="exit_s must be one of"):
+        await hub.async_set_mode_delays("home", exit_s=seconds)
+    with pytest.raises(ValueError, match="alarm_delay_home"):
+        await hub.async_set_setting("alarm_delay_home", seconds, channel=0)
+    assert fake.mode_tables_received == []
 
 
 async def test_a_stale_revision_sends_no_table(station: Station, fake: FakeStation) -> None:
@@ -2568,8 +2615,8 @@ def test_ptz_support_follows_the_handlers_actions_behind_a_homebase_3() -> None:
 def test_config_support_grades_the_station_model_at_its_firmware() -> None:
     hub = _hub_with(CAMERA)
     assert hub.config_support(StationFeature.MODE_TABLES).support is Support.VERIFIED
-    assert hub.config_support(StationFeature.SCHEDULE).support is Support.DECLARED
-    assert hub.config_support(StationFeature.CROSS_CAMERA).support is Support.DECLARED
+    assert hub.config_support(StationFeature.CROSS_CAMERA).support is Support.VERIFIED
+    assert hub.config_support(StationFeature.ARMING_GROUPS).support is Support.DECLARED
     old = Station(
         dataclasses.replace(STATION, main_sw_version="3.2.0.0"), hub.session, sub_devices=[CAMERA]
     )
