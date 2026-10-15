@@ -2279,7 +2279,11 @@ station.config  # the same, built from the current state, no I/O
 - **Setting a mode.** `async_set_guard_mode` writes every mode in `settable_modes`: the
   defined modes except Off, which is report-only, and Geofencing. A custom mode is written through 1224
   like a built-in one; one the station does not have is refused (`UnsupportedError`,
-  nothing sent) while its mode list is known, and sent as asked while it is not.
+  nothing sent) while its mode list is known, and sent as asked while it is not. A
+  station model whose `config_support(StationFeature.GUARD_MODE)` is `UNKNOWN` (the
+  T8N00 and T9000, which the eufy app reaches over WebRTC, and the models without data)
+  is refused before sending (`UnsupportedError`, `device_sn` the station): hide the mode
+  control there. A station whose model is not a station on record is written as before.
 - **Names.** `ModeInfo.name` is the display name. For a code alone, `GuardMode.label` (or
   `guard_mode_label(code)`, which also names an unknown code) gives the sentence-case
   label: Away, Home, Schedule, Custom 1-3, Off, Geofencing, Disarmed.
@@ -2290,13 +2294,27 @@ station.config  # the same, built from the current state, no I/O
   the copy the station stores per mode (on a HomeBase 3, 1157-1161 and 1177, usually from
   the cloud list, which lags a write until the next list fetch). None when no source
   carries the table (a mode never configured); a table is never invented.
+  Where the stored copy lives depends on the model
+  (`mode_table_storage(product_code)`):
+  - `ACTION_PARAMS` (T8001, T8002, T8010, T8025): the devices' per-mode parameters only.
+  - `HB3_TABLES` (T8030): the devices' parameters, else 1157-1161 / 1177.
+  - `PRO_ALARM` (T8020, T8023, T8024, T8026): the devices' parameters, as the eufy app
+    reads these models, else the station's 61300 Home, 61301 Away, 61307-61309 Custom 1-3
+    and 61306 Disarmed (the parameter dump first, then the cloud list). The per-mode
+    settings (`camera_action_<mode>`, `alarm_delay_<mode>`, ...) read the same copy where
+    the device's block lacks them.
+
+  The integration needs no per-model code: `config.mode_tables`, the per-mode settings
+  and the writes below pick the layout. On these models the tables are *declared*
+  (`config_support`), not tested on hardware.
 - **Delay choices.** An entry (`alarm_delay`) or exit (`leaving_delay`) delay takes one of
   `MODE_DELAY_CHOICES` (`from eufy_home_security import MODE_DELAY_CHOICES`: 0, 15, 30,
   45, 60, 180, 300 s; 0 is off), the list the eufy app offers on every station. No model
   has a list of its own; a station whose `config_support(StationFeature.MODE_DELAYS)` is
   `UNKNOWN` (the app offers no delays there, or the library cannot send them) gets no
-  delay control at all. The per-mode delay settings carry the same list as
-  `setting.values`.
+  delay control at all: among the declared models, the pro-alarm stations (T8020, T8023,
+  T8024, T8026), where the eufy app shows no entry or exit delay. The per-mode delay
+  settings carry the same list as `setting.values`.
 - **Cross-camera tracking time.** `config.cross_camera.continuous_time_s` is the
   continuous tracking time in seconds (120-1800); `continuous_time` is the same choice
   as the setting's value (`setting_keys["cross_camera.continuous_time"]` names the
@@ -2366,7 +2384,13 @@ await station.async_set_mode_actions("away", {cam_sn: {"camera_siren": True}})
   show it (`CommandNotAppliedError` otherwise). A HomeBase 3's dump carries neither the
   mode list nor the schedule: there the station's zero receipt confirms it, and
   `station.config` shows the written value at once (source `P2P`) until the cloud's copy
-  changes after the write; the next cloud refresh then carries it.
+  changes after the write; the next cloud refresh then carries it. A mode table a
+  pro-alarm station keeps only in its stored copy (61300-61309) is confirmed the same
+  way: by the dump where it carries the param, else by the zero receipt.
+- **Never blind.** A mode table write replaces the whole mode, so it is refused before
+  sending (`UnsupportedError`) when neither the devices' parameters nor the stored copy
+  give the current table, when the stored copy does not decode, or when it makes a
+  trigger sound a siren accessory (the library's table would clear that).
 - **Ask first.** `StationFeature.alarm_affecting` names the writes that change how the
   station alarms (schedule, mode tables and delays, guard mode): confirm those with the
   user. Within a mode table, `MODE_ACTION_ALARM_AFFECTING` names the flags that make a

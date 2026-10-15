@@ -76,7 +76,13 @@ from .devices.settings import (
     report_value,
     scope_for_kind,
 )
-from .devices.station_config_support import StationFeature, restart_command
+from .devices.station_config_support import (
+    ModeTableStorage,
+    StationFeature,
+    mode_table_storage,
+    restart_command,
+    station_config_models,
+)
 from .devices.station_config_support import config_support as station_config_support
 from .devices.support import Evidence, Support
 from .devices.timezones import TIMEZONE_DOMAIN
@@ -164,6 +170,7 @@ from .p2p.messages import (
     record_id_day,
 )
 from .p2p.mode_actions import (
+    CMD_SET_ALL_ACTION,
     FIELD_PARAMS,
     MODE_TABLE_MODES,
     MODE_TABLE_PARAMS,
@@ -205,6 +212,7 @@ from .p2p.station_config_codecs import (
     decode_tracking_groups,
     delete_custom_mode,
     encode_schedule_default,
+    encode_stored_mode_table,
     encode_tracking_cameras,
     encode_tracking_groups,
     modify_custom_mode,
@@ -217,6 +225,8 @@ from .station_config import (
     build_station_config,
     changed_fields,
     check_revision,
+    stored_device_params,
+    stored_mode_table,
 )
 
 if TYPE_CHECKING:
@@ -319,11 +329,15 @@ def _ip_or_none(value: str | None) -> str | None:
 
 
 def _read(
-    settings: Mapping[str, Setting], key: str, params: Mapping[int, str | None]
+    settings: Mapping[str, Setting],
+    key: str,
+    params: Mapping[int, str | None],
+    stored: Mapping[int, str] | None = None,
 ) -> Value | None:
     """The public value of setting ``key`` in one block's ``params``: None when the
     block does not report it or the setting is not readable; ``UnsupportedError`` for a
-    key the device does not have."""
+    key the device does not have. A per-mode setting the block lacks reads ``stored``
+    (:attr:`SubDeviceState.stored_mode_params`)."""
     setting = settings.get(key)
     if setting is None:
         raise UnsupportedError(f"unknown setting {key!r} for this device")
@@ -331,6 +345,8 @@ def _read(
         return None
     raw = params.get(setting.read_param)
     if setting._mode_table is not None:
+        if raw is None and stored is not None:
+            raw = stored.get(setting.read_param)
         return report_value(raw)
     value = setting.decode(raw, params)
     if value is None and raw is not None and not raw.lstrip("-").isdigit():
@@ -419,6 +435,11 @@ class SubDeviceState:
     """A motion sensor's raw PIR sensitivity (param 1609). The handler maps only 0-2
     to a level; other values (a T8910 reported 8) have no vendor meaning."""
     params: Mapping[int, str | None] = field(repr=False)
+    stored_mode_params: Mapping[int, str] = field(default_factory=dict, repr=False)
+    """The per-mode action and delay values a pro-alarm station's stored mode tables
+    (61300-61309) give this device, by param id, for the modes no block of the dump
+    reports (:func:`~.station_config.stored_device_params`); the per-mode settings read
+    them where :attr:`params` lacks the param."""
     settings: Mapping[str, Setting] = field(default_factory=dict, repr=False, compare=False)
     """This device's settings by key (:meth:`Station.settings_for`), resolved when the
     state is built."""
@@ -463,7 +484,7 @@ class SubDeviceState:
         readable, never a default. Raises ``UnsupportedError`` for a key this device
         does not have (:attr:`settings`).
         """
-        return _read(self.settings, key, self.params)
+        return _read(self.settings, key, self.params, self.stored_mode_params)
 
 
 #: Parameters the library reads into :class:`StationState` itself rather than through
@@ -560,6 +581,9 @@ class StationState:
     """One consistent snapshot of a station, taken from a single parameter dump."""
 
     serial: str
+    product_code: str | None = None
+    """The station's product code (``T8030``); None when neither the cloud nor the serial
+    names it."""
     guard_mode: GuardMode | int | None
     """The selected guard mode (param 1224): :attr:`GuardMode.SCHEDULE` while a schedule
     runs."""
@@ -1504,6 +1528,11 @@ class Station:
     def _state(self, dump: ParamDump) -> StationState:
         cloud_by_channel = self._cloud_by_channel()
         blocks = {ch: params for ch, params in dump.devices.items() if ch != STATION_CHANNEL}
+        station = dump.station
+        own_settings = self._settings_by_key(self.serial)
+        setting_params, param_sources = self._setting_params(station, own_settings)
+        product_code = self._product_code(self.serial)
+        stored = stored_device_params(setting_params, product_code, blocks)
         devices = {}
         for channel, params in blocks.items():
             cloud = cloud_by_channel.get(channel)
@@ -1544,17 +1573,16 @@ class Station:
                 low_battery=_flag_or_none(params.get(PARAM_SENSOR_LOW_BATTERY)),
                 pir_sensitivity_raw=_count_or_none(params.get(PARAM_SENSOR_PIR_SENSITIVITY)),
                 params=dict(params),
+                stored_mode_params=stored.get(channel, {}),
                 settings=self._settings_by_key(serial) if serial else {},
             )
         # Log lines on the session name a parameter by the device kind on its channel.
         self.session.channel_scopes.update(
             {ch: scope_for_kind(d.kind) for ch, d in devices.items() if d.kind is not None}
         )
-        station = dump.station
-        own_settings = self._settings_by_key(self.serial)
-        setting_params, param_sources = self._setting_params(station, own_settings)
         return StationState(
             serial=self.serial,
+            product_code=product_code,
             guard_mode=dump.guard_mode,
             active_mode=dump.guard_mode if dump.active_mode is None else dump.active_mode,
             firmware=_text_or_none(dump.meta.get("main_sw_version")) or self.device.main_sw_version,
@@ -1619,12 +1647,29 @@ class Station:
     async def async_set_guard_mode(self, mode: GuardMode | str | int) -> GuardMode | int:
         """Arm/disarm; returns the mode the station reports it applied.
 
-        Raises ``UnsupportedError`` before anything is sent for a custom mode the
-        station does not have while its mode list is known (:meth:`target_mode_name`).
+        Raises ``UnsupportedError`` before anything is sent for a station model on
+        record whose guard mode is *unknown* (:meth:`config_support`: T8N00, T9000 and
+        the models without data), and for a custom mode the station does not have while
+        its mode list is known (:meth:`target_mode_name`).
         """
         guard = GuardMode.parse(mode)
+        self._require_guard_mode()
         self.target_mode_name(guard)
         return await self.session.async_set_guard_mode(guard)
+
+    def _require_guard_mode(self) -> None:
+        """``UnsupportedError`` (nothing sent) where the station's model is a station
+        model on record whose guard mode :meth:`config_support` grades ``UNKNOWN`` (the
+        eufy app reaches it over WebRTC, or no data for the model). A station whose
+        model is not on record (no product code, a standalone camera) is not refused."""
+        code = self._product_code(self.serial)
+        if code is None or code.upper() not in station_config_models():
+            return
+        evidence = self.config_support(StationFeature.GUARD_MODE)
+        if evidence.support is Support.UNKNOWN:
+            raise UnsupportedError(
+                f"guard_mode is not supported here: {evidence.source}", device_sn=self.serial
+            )
 
     async def async_set_setting(
         self,
@@ -1776,7 +1821,10 @@ class Station:
 
         The whole mode is read fresh once, every change is applied to it with every
         other bit and value kept, the table is sent once (``SET_ALL_ACTION``) and
-        every value confirmed by read-back. Nothing is sent when the table already
+        every value confirmed by read-back. On a pro-alarm station (T8020, T8023, T8024,
+        T8026) whose devices report no per-mode params, the table is read from the
+        station's stored copy (61300-61309) and the write confirmed against it
+        (:meth:`_async_write_stored_mode_table`). Nothing is sent when the table already
         holds the result, nor for an empty edit (which returns the current table).
         Single-flag writes (:meth:`async_set_mode_action`, :meth:`async_set_setting`)
         share the station's mode-table lock, so concurrent writes keep each other's bits.
@@ -2337,13 +2385,16 @@ class Station:
                         f"channel {target}"
                     )
             if expect_revision is not None:
-                check_revision(build_station_config(state), expect_revision)
+                # The merged state after this dump, as `config` shows it: the dump alone
+                # lacks the receipt-confirmed writes the revision covers.
+                check_revision(build_station_config(self.state or state), expect_revision)
             table = mode_table_from_params(dump.devices, mode)
+            stored_param: int | None = None
             if not table.actions:
-                raise UnsupportedError(
-                    f"the station stores no {mode.name.lower()} mode table (no device reports "
-                    f"param {FIELD_PARAMS[ModeTableField.ACTION][mode]})"
-                )
+                # The merged state: the fresh dump, else a write of this library's own
+                # that the cloud has not replaced, else the cloud's copy.
+                merged = self.state or state
+                stored_param, table = self._stored_table_for_write(merged, mode, table)
             new = edit(table)
             if new.same_values(table):
                 return table, table
@@ -2362,6 +2413,9 @@ class Station:
                     "is not written"
                 )
             new.request("")  # refuses a delay the table cannot carry, before any traffic
+            if stored_param is not None:
+                await self._async_write_stored_mode_table(new, stored_param)
+                return table, new
             try:
                 await self.session.async_set_mode_table(new)
             except CommandNotAppliedError as err:
@@ -2369,6 +2423,70 @@ class Station:
                     err.command, f"{self._mode_table_mismatch(new)}: {err}"
                 ) from err
             return table, new
+
+    @staticmethod
+    def _stored_table_for_write(
+        state: StationState, mode: GuardMode, table: ModeTable
+    ) -> tuple[int, ModeTable]:
+        """The table a write starts from when no device reports ``mode``'s action
+        param (``table`` is empty): a pro-alarm station's stored copy (61300-61309, dump
+        before cloud) with its param. ``UnsupportedError`` when there is none (a 1255
+        replaces the whole table, so it is never sent blind), when it does not decode,
+        or when it names a siren-accessory trigger (a library table clears those).
+        """
+        action_param = FIELD_PARAMS[ModeTableField.ACTION][mode]
+        name = mode.name.lower()
+        if mode_table_storage(state.product_code) is not ModeTableStorage.PRO_ALARM:
+            raise UnsupportedError(
+                f"the station stores no {name} mode table (no device reports param {action_param})"
+            )
+        try:
+            stored = stored_mode_table(state.setting_params, state.product_code, mode)
+            built = stored.to_mode_table() if stored is not None else table
+        except (ProtocolError, ValueError) as err:
+            raise UnsupportedError(
+                f"the station's stored {name} mode table cannot be read: {err}"
+            ) from err
+        if stored is None or not built.actions:
+            raise UnsupportedError(
+                f"the station stores no {name} mode table (no device reports param "
+                f"{action_param}, and no source carries its stored copy)"
+            )
+        if any(stored.siren_actions.values()):
+            raise UnsupportedError(
+                f"the stored {name} mode table sounds a siren accessory on a trigger; a "
+                "library mode table clears those triggers, so it is not written"
+            )
+        return stored.param, built
+
+    async def _async_write_stored_mode_table(self, table: ModeTable, param: int) -> None:
+        """Send ``table`` (frame 1255) to a station that keeps it in its own ``param``
+        and confirm it (:meth:`_async_confirm_param`): a fresh dump carrying ``param``
+        must hold the table, else the station's zero receipt confirms it and the sent
+        body is filed as this library's write of ``param``."""
+        sent: list[bytes] = []
+
+        def body(account: str) -> bytes:
+            sent.append(table.encode(account))
+            return sent[-1]
+
+        def holds(raw: str) -> bool:
+            try:
+                stored = stored_mode_table({param: raw}, product_code, table.mode)
+                return stored is not None and stored.to_mode_table().same_values(table)
+            except (UnsupportedError, ValueError):
+                return False
+
+        product_code = self._product_code(self.serial)
+        _LOGGER.info(
+            "%s: writing the %s mode table (%d devices, stored in param %d)",
+            self._log_name,
+            table.mode.name,
+            len(table.actions),
+            param,
+        )
+        receipted = await self.session.async_send_json_frame(CMD_SET_ALL_ACTION, body)
+        await self._async_confirm_param(param, encode_stored_mode_table(sent[-1]), holds, receipted)
 
     def _mode_table_mismatch(self, table: ModeTable) -> str:
         """Which device's flag or delay the last read does not show as ``table`` set it."""
@@ -2428,7 +2546,8 @@ class Station:
         on hardware; of the flag names, ``record``, ``notification`` and
         ``motion_sensor_respond`` are checked against the app display.
 
-        Raises ``UnsupportedError`` for a mode without per-device actions (Schedule,
+        Raises ``UnsupportedError`` where :meth:`config_support` grades mode tables
+        *unknown*, for a mode without per-device actions (Schedule,
         Off, Disarmed, Geofence), a device whose kind is unknown or has no catalogued
         actions, or a flag that kind does not name (all before anything is sent);
         :class:`CommandNotAppliedError` when the current mask cannot be read; and
@@ -2436,6 +2555,7 @@ class Station:
         """
         if (device_sn is None) == (channel is None):
             raise ValueError("pass exactly one of device_sn or channel")
+        self._require_feature(StationFeature.MODE_TABLES)
         target = self.channel_for(device_sn) if device_sn is not None else cast(int, channel)
         guard = GuardMode.parse(mode)
         spec = self._mode_action_spec(guard, target)
@@ -2515,7 +2635,8 @@ class Station:
         """Write one mode-table value: read the whole mode fresh, change ``target``'s
         entry, send the table (``SET_ALL_ACTION``) and confirm every value by read-back.
 
-        Refuses (``UnsupportedError``, nothing sent) when the setting does not apply to
+        Refuses (``UnsupportedError``, nothing sent) where :meth:`config_support` grades
+        mode tables (an action) or mode delays (a delay) *unknown*, when the setting does not apply to
         the device on ``target``, when a device of the table is of no known kind (it may
         be a siren accessory, whose triggers a library table would clear), or when a
         delay the table must carry unchanged differs between devices; and
@@ -2525,6 +2646,11 @@ class Station:
         ``value`` without writing when the table already holds it.
         """
         mode, table_field = MODE_TABLE_PARAMS[spec.command_id]
+        self._require_feature(
+            StationFeature.MODE_TABLES
+            if table_field is ModeTableField.ACTION
+            else StationFeature.MODE_DELAYS
+        )
 
         def edit(table: ModeTable) -> ModeTable:
             if table_field is ModeTableField.ACTION:

@@ -98,6 +98,7 @@ from eufy_home_security.testing.station import (
     synthetic_hub_storage,
     v1_still,
 )
+from tests.test_station_config import _cloud_entry, mode_list
 
 STATION = CloudDevice(
     device_sn=SYNTHETIC.station_sn,
@@ -1593,6 +1594,24 @@ async def test_a_stale_revision_sends_no_table(station: Station, fake: FakeStati
     assert err.value.config.revision == revision
     assert fake.mode_tables_received == []
     await hub.async_set_mode_actions("away", edit, expect_revision=revision)
+    assert len(fake.mode_tables_received) == 1
+
+
+async def test_the_revision_after_a_receipt_confirmed_write_is_not_stale(
+    station: Station, fake: FakeStation
+) -> None:
+    """A table write taking the revision `config` shows right after a custom-mode write
+    (confirmed by receipt, absent from the dump) goes through."""
+    fake.reply_to_settings = True
+    _mode_table_blocks(fake)
+    hub = _matrix_hub(station)
+    hub.apply_cloud_device(_cloud_entry({1256: mode_list((1, "Home", 1), (0, "Away", 0))}))
+    revision = (await hub.async_get_config(refresh=True)).revision
+    await hub.async_create_custom_mode("Night watch", expect_revision=revision)
+    assert hub.config is not None
+    await hub.async_set_mode_actions(
+        "away", {SYNTHETIC.camera_sn: {"camera_siren": True}}, expect_revision=hub.config.revision
+    )
     assert len(fake.mode_tables_received) == 1
 
 
