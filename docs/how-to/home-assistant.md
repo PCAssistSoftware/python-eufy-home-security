@@ -2149,7 +2149,7 @@ it takes. The library reads and writes the groups in the cloud and activates the
 app does; none of it is verified on hardware or against the live cloud yet.
 
 ```python
-from eufy_home_security.cloud.arming import ArmingOutcome  # models live in this module
+from eufy_home_security import ArmingOutcome, GuardMode
 
 listing = await eufy.async_arming_groups()  # ArmingGroupList(house_id, groups, guided)
 group = await eufy.async_create_arming_group("Leaving", {hub_sn: "away", solo_sn: GuardMode.AWAY})
@@ -2158,6 +2158,10 @@ activation = await eufy.async_activate_arming_group(group.group_id)  # changes a
 logs = await eufy.async_arming_group_logs(group.group_id)
 await eufy.async_delete_arming_group(group.group_id)
 ```
+
+The models are exported from the package root: `ArmingGroupList`, `ArmingGroup`,
+`ArmingGroupMember`, `ArmingGroupPreset`, `ArmingGroupLog`, `ArmingActivation`,
+`ArmingMemberResult` and `ArmingOutcome`.
 
 - **The house.** Without `house_id` every call works on the house holding this account's
   stations (`ValueError` when they are in several houses: pass `house_id`). The app's
@@ -2191,9 +2195,10 @@ await eufy.async_delete_arming_group(group.group_id)
 - **Logs.** `ArmingGroupLog.create_time` is the cloud's epoch seconds;
   `ArmingGroupLog.created_at` is the same as an aware UTC `datetime`. `user_name` is the
   name an activation was recorded under: the library sends the account's nickname, as
-  the app does (the login answer's `nick_name`, kept with the cached session;
-  `EufyCloudApi.activation_user_name`), and the e-mail's local part until a login gave
-  one. The members' guard-mode writes still carry the e-mail's local part.
+  the app does: the login answer's `nick_name`, else the account profile's, read once on
+  the first activation without a login and kept with the cached session
+  (`EufyCloudApi.async_activation_user_name`); the e-mail's local part only when neither
+  names one. The members' guard-mode writes still carry the e-mail's local part.
 
 ### Station configuration
 

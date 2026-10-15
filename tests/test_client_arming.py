@@ -198,22 +198,35 @@ async def test_house_rules_are_checked_before_the_write() -> None:
     assert _arming_bodies(cloud, const.ARMING_GROUP_ADD_PATH) == []
 
 
-async def test_update_sends_only_what_changes_and_keeps_a_stored_mode_name() -> None:
+async def test_update_sends_the_name_and_all_members_and_keeps_a_stored_mode_name() -> None:
+    """The cloud refuses an update without both keys: a rename carries the listed
+    members as stored, a member change the listed name."""
     cloud = _cloud()
     cloud.arming_groups[HOUSE] = [
-        _group(GROUP, "Night", _member(SYNTHETIC.station_sn, 4, "Porch")),
+        _group(
+            GROUP, "Night", _member(SYNTHETIC.station_sn, 4, "Porch"), _member(OTHER_STATION_SN, 99)
+        ),
         _group("group-2", "Day"),
     ]
     eufy = _client(cloud)
-    renamed = await eufy.async_update_arming_group(GROUP, name="Late")
+    renamed = await eufy.async_update_arming_group(GROUP, name=" Late ")
     moved = await eufy.async_update_arming_group(
         GROUP, members={SYNTHETIC.station_sn: GuardMode.CUSTOM_2, OTHER_STATION_SN: "home"}
     )
     assert _arming_bodies(cloud, const.ARMING_GROUP_UPDATE_PATH) == [
-        {"house_id": HOUSE, "group_id": GROUP, "group_name": "Late"},
         {
             "house_id": HOUSE,
             "group_id": GROUP,
+            "group_name": "Late",
+            "devices": [
+                {"device_sn": SYNTHETIC.station_sn, "mode": "Porch", "mode_id": 4},
+                {"device_sn": OTHER_STATION_SN, "mode": "99", "mode_id": 99},
+            ],
+        },
+        {
+            "house_id": HOUSE,
+            "group_id": GROUP,
+            "group_name": "Late",
             "devices": [
                 {"device_sn": SYNTHETIC.station_sn, "mode": "Porch", "mode_id": 4},
                 {"device_sn": OTHER_STATION_SN, "mode": "Home", "mode_id": 1},
@@ -339,6 +352,20 @@ async def test_an_on_demand_station_is_woken_and_a_full_activation_is_complete()
     assert battery.writes == [(GuardMode.DISARMED, 2)]
 
 
+async def test_activation_is_recorded_under_the_profile_nickname_read_once() -> None:
+    """A warm store's session carries no nickname: the first activation reads the
+    profile, later ones reuse the cached nickname."""
+    cloud = _cloud()
+    cloud.nick_name = "Kim R"
+    eufy = _client(cloud)
+    _install(eufy, StubStation(SYNTHETIC.station_sn, cloud, mode=GuardMode.AWAY))
+    await eufy.async_activate_arming_group(GROUP)
+    await eufy.async_activate_arming_group(GROUP)
+    bodies = _arming_bodies(cloud, const.ARMING_GROUP_ACTIVATE_PATH)
+    assert [body["user_name"] for body in bodies] == ["Kim R", "Kim R"]
+    assert cloud.calls.count("profile") == 1
+
+
 async def test_a_refused_activation_record_touches_no_station() -> None:
     cloud = _cloud()
     cloud.arming_errors["setup_guard"] = CloudApiError(31001, "refused")
@@ -419,6 +446,7 @@ async def test_member_modes_are_checked_and_named_by_their_station() -> None:
         {
             "house_id": HOUSE,
             "group_id": GROUP,
+            "group_name": "Night",
             "devices": [
                 {"device_sn": SYNTHETIC.station_sn, "mode": "Night watch", "mode_id": 3},
                 {"device_sn": OTHER_STATION_SN, "mode": "Custom 1", "mode_id": 3},

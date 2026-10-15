@@ -328,7 +328,8 @@ class FakeCloud:
     ``arming_groups`` holds each house id's raw arming groups (``guard_list``
     ``data.groups``), served by the ``region`` cluster with ``arming_guided`` and changed
     by the requests as the cloud would: ``add_guard`` appends a group with a new
-    ``group_id``, ``update_guard`` replaces its name and/or devices, ``delete_guard``
+    ``group_id``, ``update_guard`` replaces its name and devices (refused with code
+    10000 unless the body carries both, as the cloud does), ``delete_guard``
     removes it, and ``setup_guard`` sets its ``status`` ``"1"`` (the others ``"0"``) and
     puts a record first in ``arming_logs`` (each group id's ``get_guard_logs`` entries).
     ``arming_requests`` records each such request's path and body; ``calls`` records them
@@ -396,6 +397,9 @@ class FakeCloud:
     """``estimate_domain``: each country's home region; another country names no cluster."""
     last_login_ab: dict[str, str] = field(default_factory=dict)
     """The ``ab`` of the last login per region (``get_last_login_code``)."""
+    nick_name: str | None = None
+    """The account's nickname, which the profile (``get_profile``, recorded as
+    ``"profile"``) answers; None answers a profile without one."""
     arming_groups: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     """Each house id's raw arming groups; the arming-group requests change them."""
     arming_guided: int = 2
@@ -476,6 +480,11 @@ class FakeCloud:
             note("last_login_code")
             self._raise_call_error()
             return {"ab_code": self.last_login_ab.get(region, "").upper()}
+        if path == const.PROFILE_PATH:
+            note("profile")
+            self._raise_call_error()
+            nick = {} if self.nick_name is None else {"nick_name": self.nick_name}
+            return {"user_id": self.user_id, **nick}
         if path == const.CLIENT_COUNTRY_PATH:
             note("client_country")
             self._raise_call_error()
@@ -598,10 +607,11 @@ class FakeCloud:
             # The cloud's code for an unknown group is not established; any refusal does.
             raise _Refusal(CloudApiError(_UNKNOWN_GROUP_CODE, "no such group", endpoint=path))
         if path == const.ARMING_GROUP_UPDATE_PATH:
-            if "group_name" in payload:
-                group["group_name"] = payload["group_name"]
-            if "devices" in payload:
-                group["devices"] = [dict(d) for d in payload["devices"]]
+            if "group_name" not in payload or "devices" not in payload:
+                code = int(const.CloudCode.INPUT_PARAM_INVALID)
+                raise _Refusal(CloudApiError(code, "Failed to request", endpoint=path))
+            group["group_name"] = payload["group_name"]
+            group["devices"] = [dict(d) for d in payload["devices"]]
         elif path == const.ARMING_GROUP_DELETE_PATH:
             groups.remove(group)
         else:  # setup_guard
