@@ -29,6 +29,7 @@ from eufy_home_security.devices.model_settings import (
     settings_of,
 )
 from eufy_home_security.devices.recipes import connect_type
+from eufy_home_security.devices.timezones import encode_zone, zone_ids
 from eufy_home_security.events import (
     AlarmChanged,
     CloudProblem,
@@ -1808,6 +1809,36 @@ async def test_on_demand_station_discover_and_start() -> None:
             fake.stop()
 
 
+async def test_a_hub_gets_the_cloud_refresh_loop_and_a_missing_copy_is_fetched_at_start() -> None:
+    """A hub's cloud copy (its settings the dump lacks) is refreshed on the interval;
+    a list cached without station parameters is fetched once when the stations start."""
+    fake = FakeStation()
+    await fake.start()
+    cloud = FakeCloud.for_stations(fake)
+    cloud.devices[0].pop("params")  # as a list cached before station entries kept them
+    try:
+        eufy = build_eufy_security(
+            email=SYNTHETIC.email,
+            store=MemoryStore(),
+            cloud=cloud,
+            stations={fake.serial: fake},
+            cloud_state_refresh=0.2,
+        )
+        await eufy.async_discover()
+        station = eufy.stations[fake.serial]
+        before = station.has_cloud_copy
+        cloud.devices[0]["params"] = [{"param_type": 1235, "param_value": "26"}]
+        cloud.calls.clear()
+        await eufy.async_start(push=False)
+        assert cloud.calls.count("devices") == 1  # at start, not after the interval
+        assert (before, station.has_cloud_copy) == (False, True)
+        await asyncio.sleep(0.5)
+        assert cloud.calls.count("devices") >= 2  # the loop runs without an on-demand station
+        await eufy.async_close()
+    finally:
+        fake.stop()
+
+
 async def test_async_refresh_cloud_state() -> None:
     async with aiohttp.ClientSession() as http:
         # no on-demand
@@ -1874,6 +1905,43 @@ async def test_async_refresh_cloud_state() -> None:
         cloud2.calls.clear()
         await asyncio.sleep(0.2)
         assert cloud2.calls.count("devices") == 0
+
+
+async def test_a_hubs_cloud_copy_comes_from_the_list_and_its_refresh() -> None:
+    """Discovery (cached list included) gives a hub its cloud copy; an explicit refresh
+    fetches the list once and updates it; nothing wakes or polls on its own."""
+    fake = FakeStation()
+    cloud = FakeCloud.for_stations(fake)
+    cloud.devices[0]["params"] = [{"param_type": 1065, "param_value": "1", "update_time": 1.7e9}]
+    cloud.devices[0]["time_zone"] = encode_zone(zone_ids()[1])
+    await fake.start()
+    try:
+        async with aiohttp.ClientSession() as http:
+            eufy = account(http, cloud, cloud_state_refresh=0.1)
+            eufy._discovery_port = fake.discovery_port
+            eufy._station_hosts = {SYNTHETIC.station_sn: "127.0.0.1"}
+            [station] = await eufy.async_discover()
+            assert "devices" not in cloud.calls  # the warm cache carried the copy
+            try:
+                state = await station.async_update()
+                assert state.setting("device_cross_cam_tracking_swtich") is True
+                assert state.setting("timezone_set") == zone_ids()[1]
+                assert state.cloud_param_ids == (1065, 1215)
+
+                cloud.devices[0]["params"][0]["param_value"] = "0"
+                cloud.devices[0]["params"][0]["update_time"] = 1.7e9 + 1
+                assert await eufy.async_refresh_cloud_state() == 1
+                assert cloud.calls.count("devices") == 1
+                assert station.state is not None
+                assert station.state.setting("device_cross_cam_tracking_swtich") is False
+
+                await eufy.async_start(p2p=False, push=False)
+                await asyncio.sleep(0.3)
+                assert cloud.calls.count("devices") == 1  # no loop without an on-demand station
+            finally:
+                await eufy.async_close()
+    finally:
+        fake.stop()
 
 
 async def test_guard_mode_push_updates_on_demand_station() -> None:
