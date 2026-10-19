@@ -86,6 +86,17 @@ def test_kind_markers_are_merged_per_kind_and_single_valued() -> None:
     assert kind_from_params({1400: "0", 1605: "1"}) is None  # conflicting markers
 
 
+def test_the_t8010_profile_grades_only_local_events_unknown() -> None:
+    profile = profile_for_serial("T8010P0000000000")
+    assert profile is PROFILES["T8010"]
+    assert set(profile.capabilities) == {Capability.LOCAL_EVENTS}
+    evidence = profile.capabilities[Capability.LOCAL_EVENTS]
+    assert evidence.support is Support.UNKNOWN
+    assert "cloud push" in evidence.note
+    assert not profile.params
+    assert not profile.kind_markers
+
+
 def test_declared_model_without_profile_gets_fallback() -> None:
     profile = profile_for_serial("T8002P0000000000")
     assert profile is FALLBACK_PROFILES[DeviceKind.STATION]
@@ -97,7 +108,10 @@ def test_the_t8161_profile_mirrors_the_t8160s_declared() -> None:
     assert profile is PROFILES["T8161"]
     assert set(profile.capabilities) == set(PROFILES["T8160"].capabilities)
     assert profile.params == PROFILES["T8160"].params
-    assert {e.support for e in profile.capabilities.values()} == {Support.DECLARED}
+    assert {
+        cap for cap, e in profile.capabilities.items() if e.support is not Support.DECLARED
+    } == {Capability.LOCAL_EVENTS}
+    assert profile.support(Capability.LOCAL_EVENTS) is Support.UNKNOWN
     assert "T8161 handler" in profile.capabilities[Capability.LIVE_STREAM].source
     assert not profile.kind_markers
 
