@@ -12,6 +12,7 @@ import pytest
 from eufy_home_security.events import (
     AlarmPhase,
     ArmingSource,
+    DetectionType,
     EventDeduplicator,
     EventScope,
     EventSource,
@@ -96,6 +97,35 @@ def test_short_keys_decode_to_the_same_event() -> None:
     assert event.event_time_ms == 1789130460000
 
 
+@pytest.mark.parametrize(
+    ("inner", "detection"),
+    [
+        ({"a": 1, "event_type": 3101, "i": "1a2b3c"}, DetectionType.PERSON),
+        ({"a": 1, "event_type": 3101, "i": "3107"}, DetectionType.VEHICLE),
+        ({"a": 1, "event_type": 3101, "i": "3106"}, DetectionType.PET),
+        ({"a": 1, "event_type": 3101, "f": "Alice", "i": "1a2b3c"}, DetectionType.IDENTITY_PERSON),
+        ({"a": 1, "event_type": 3101, "i": ""}, DetectionType.MOTION),
+        ({"a": 1, "event_type": 3102}, DetectionType.PERSON),  # a pushed 3102 without a face
+    ],
+)
+def test_a_short_key_security_push_lifts_its_face_id_and_kind(
+    inner: dict[str, Any], detection: DetectionType
+) -> None:
+    event = decode_push(_message({"s": SYNTHETIC.camera_sn, "t": 1789130460, **inner}))
+    assert event.fetch_id == (inner.get("i") or None)
+    assert event.detection is detection
+    assert event.event_type == inner["event_type"]
+
+
+def test_a_malformed_fetch_id_or_session_id_is_rejected() -> None:
+    event = decode_push(
+        _message({"a": 1, "event_type": 3101, "i": "not hex", "session_id": "has space"})
+    )
+    assert (event.fetch_id, event.session_id) == (None, None)
+    assert {"fetch_id", "session_id"} <= event.rejected_fields
+    assert event.detection is DetectionType.MOTION
+
+
 def test_url_safe_alphabet_and_trailing_nul_tolerated() -> None:
     payload = json.dumps({"arming": 0, "mode": 63}).encode() + b"\x00\x00"
     encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
@@ -118,7 +148,7 @@ def test_push_id_is_the_span_id_and_the_dedupe_key_is_second_granular() -> None:
         _message({"s": SYNTHETIC.camera_sn, "event_type": 3102}, event_time="1700000000")
     )
     assert detection.event_time_ms == 1_700_000_000_000
-    assert detection.dedupe_key == f"{SYNTHETIC.camera_sn}:1700000000:3102"
+    assert detection.dedupe_key == f"{SYNTHETIC.camera_sn}:1700000000:detection"
 
 
 def test_the_event_time_is_the_inner_time_the_p2p_copy_carries() -> None:
@@ -147,7 +177,7 @@ def test_the_event_time_is_the_inner_time_the_p2p_copy_carries() -> None:
     assert cloud.record_id == 2026091600049
     del inner["unique_id"]
     without_id = decode_push(_message(inner, event_time=outer), now_ms=lambda: NOW_MS)
-    assert without_id.dedupe_key == f"{SYNTHETIC.camera_sn}:{created_ms // 1000}:3102"
+    assert without_id.dedupe_key == f"{SYNTHETIC.camera_sn}:{created_ms // 1000}:detection"
     no_inner_time = decode_push(_message({"msg_type": 18}, event_time=outer))
     assert no_inner_time.event_time_ms == created_ms + 3_000
 

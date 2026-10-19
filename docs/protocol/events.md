@@ -140,7 +140,42 @@ An attached record that is merely unbound is not a rejection: its fields are Non
 3104 crying, 3105 sound, 3106 pet, **3107 vehicle** `*`, 3108–3110 dog / lick / poop,
 **3111 identified person** `*`, 3112 stranger.
 
+**Detection kind** (`SecurityEvent.detection`). The `event_type` as an enum, except on a
+`msg_type` 1 (SECURITY_EVT) push, whose kind the eufy app takes from two side fields
+first **[app]** (`PUSH_KIND_EVIDENCE`, declared; not seen on hardware):
+
+| condition, in order | kind |
+|---|---|
+| `person_name` (short key `f`) set | identified person (3111) |
+| `fetch_id` (short key `i`) empty | the `event_type` |
+| `fetch_id` `3107`, or `event_type` 3107 | vehicle |
+| `fetch_id` `3106`, or `event_type` 3106 | pet |
+| any other `fetch_id` (a face id) | person, or the `event_type` when it already names a person (3102, 3111, 3112) |
+
+`event_type` stays the wire value. The app shows motion for any `msg_type` 1 push without
+a `fetch_id`; the library keeps the `event_type` there, so a pushed 3102 stays a person.
+A camera paired to a HomeBase 2 is reported this way: a 3101 push with a face id is a
+person. `SecurityEvent.detection_evidence` names the grade of the kind an event reports.
+
 **`notification_style`**: 1 text, 2 thumbnail, 3 both.
+
+### Push pictures
+
+A cloud detection push carries no picture bytes. It can name two pictures
+(`SecurityEvent.picture_sources`, `PushPictureSource`), both fetched without waking a
+camera, the face first as the eufy app does **[app]**:
+
+| source | named by | fetched by |
+|---|---|---|
+| `FACE` | a `msg_type` 1 push's face id: `fetch_id` (`i`) other than `3106`/`3107`, read as hex (`SecurityEvent.face_id`) | the cloud's face record ([cloud.md](cloud.md#face-records)), then its `face_url`: a small crop of the face |
+| `PIC_URL` | `pic_url`, https | a GET of the URL (the app's large notification picture) |
+| `PIC_URL` | `pic_url`, a station path (`/zx/….jpg`) | a still fetch on the station's session ([media.md](media.md#stills-1308-verified)); only for a station served locally |
+
+`EufySecurity.async_push_image(event, source=None)` returns a `PushImage` (`data`,
+`content_type`: JPEG, PNG or WebP, `face_id` of a face image). Without `source` it tries
+the named sources in that order and returns the first that works. A push that names
+neither (a HomeBase 2 motion push without a face id, an empty `pic_url`) has no picture
+of its own: the app shows text only. A header-encrypted still is refused, not returned.
 
 ### Station pushes: arming and alarm
 
@@ -422,7 +457,13 @@ short keys onto long ones instead of choosing a dialect:
 | `c` | channel | `e` | sensor open "1" |
 | `n` | name | `k` | cipher id (thumbnail key) |
 | `p` | clip file | `f` | person name |
-| `i` | fetch/face id (hex) | `j` | sense id (hex) |
+| `i` | fetch/face id (hex), `SecurityEvent.fetch_id` | `j` | sense id (hex) |
+
+`fetch_id` must be 1-16 hex digits, and `session_id` printable ASCII without spaces (at
+most 64 characters); anything else is listed in `rejected_fields`. The push listener's
+debug line (`push event: …`) names the kind and whether the push carries a face id (by its
+length only), a person name, a `pic_url` (`https`, `station` or `other`) and a
+`session_id`, with the `push_count`.
 
 **Redelivery.** Because the token is re-registered on every start, old messages
 come back after a restart. The listener persists its dedupe ring (span ids with
@@ -451,10 +492,21 @@ channels through one `EventDeduplicator` per account before emitting it
 reconnects. It holds at most 256 keys, each for one hour.
 
 **Key.** `SecurityEvent.dedupe_key` = `unique:<unique_id>` when the payload carries a
-`unique_id`, else `device_sn:event second:event_type`. The fallback compares the event
-time in **seconds**, because a cloud time without an inner time is whole seconds while
-P2P `trigger_time` is milliseconds; `event_type` stays in it, so at worst two detections
-of one second are both delivered.
+`unique_id`; else `session:<device_sn>:<session_id>` when it carries a `session_id`;
+else `device_sn:event second:kind`. The last compares the event time in **seconds**,
+because a cloud time without an inner time is whole seconds while P2P `trigger_time` is
+milliseconds. `kind` is `detection` for a camera detection (motion, person, pet,
+vehicle, identified person, stranger) and the `event_type` for anything else, so pushes
+that classify one detection differently (a motion push, then the same detection with a
+face id or as 3102) are one occurrence, while a doorbell press in the same second is
+another.
+
+**Several pushes per detection [app].** The eufy app treats the pushes of one session
+(`session_id`), or with one `event_time`, as one notification and lets the later one
+replace it: its text, so its kind, and its picture. A second push for the same clip
+(`file_path`) with a `pic_url` is dropped, and a `push_count` > 1 push is shown silently.
+The library keeps one occurrence and admits a later copy as an enrichment when it adds a
+kind (below); it does not reproduce the app's "latest wins" for a less specific kind.
 
 **Which time [verified].** For a detection the FCM *outer* `event_time` runs about 3 s
 later than the inner payload's `create_time`, so a key built from the outer time lands
@@ -474,6 +526,8 @@ byte-identical and carries
 | no device or no event time | always delivered |
 | key not seen, or forgotten | delivered, a `push_count` > 1 repeat too (its first copy may have been lost while a channel was down) |
 | key seen, and the copy carries a media path (`thumb_path`, `crop_path`, `video_path`) no earlier copy had | delivered as an **enrichment**: `SecurityEvent.enriches` is True. Typically the P2P copy, with the thumbnail and crop, after the cloud copy. Update the occurrence already shown; do not count a new detection. |
+| key seen, and the copy names a picture source (`SecurityEvent.picture_sources`) no earlier copy named | delivered as an enrichment: fetch the push picture again ([Push pictures](#push-pictures)) |
+| key seen, and the copy's `detection` was not delivered yet and is at least as specific as the most specific so far (motion < person, pet, vehicle < stranger < identified person) | delivered as an enrichment: update the occurrence's kind (motion becomes person), do not count a new detection |
 | key seen, nothing new | dropped; counted in `dropped_repeats` when `push_count` > 1, else `dropped_duplicates` |
 
 The push listener also drops FCM redeliveries by `span_id` (`SecurityEvent.push_id`)
