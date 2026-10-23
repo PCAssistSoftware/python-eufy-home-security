@@ -1097,8 +1097,8 @@ per-mode settings; a paired camera or sensor adds 15 per-mode delays and actions
 | model | settings | writable | read-only |
 |---|---|---|---|
 | T8030 | 74 | 12 | 62 |
-| T8160 | 101 | 31 | 70 |
-| T8170 | 145 | 40 | 105 |
+| T8160 | 101 | 32 | 69 |
+| T8170 | 145 | 41 | 104 |
 | T8910 | 11 | 2 | 9 |
 
 Every model's keys, values, units and labels are listed in
@@ -1310,6 +1310,36 @@ show the grade. After a restart the station's state is unavailable until the ses
 reconnects on its own (a `ConnectionChanged` reports the drop and the return); do not
 retry the restart meanwhile. Wire formats:
 [commands.md](../protocol/commands.md#station-actions-verified-t8030-declared-app).
+
+### Device sirens and the camera switch
+
+A device's own siren or light (the eufy app's alarm button, live view and device
+card) is a call on the station it is paired to, for every device the app offers one:
+
+| call | does | refuses |
+|---|---|---|
+| `device_alarms(device_sn)` | the offered choices (`DeviceAlarm.SOUND`, `LIGHT`, `SOUND_AND_LIGHT`), empty when none | — |
+| `device_alarm_default(device_sn)` | the choice the app preselects, None when none | — |
+| `async_trigger_device_alarm(device_sn, alarm=None)` | sounds `alarm` (default: the preselected one) for 30 s (**alarm-affecting**) | `UnsupportedError` when the app offers the device no alarm, or not that choice |
+| `async_stop_device_alarm(device_sn, alarm=None)` | stops it (**alarm-affecting**) | as the trigger |
+
+The choices and requests come from the model's handler per connect type (generated
+data, [commands.md § Device siren](../protocol/commands.md#device-siren-declared-app));
+graded *declared (eufy app)*, not verified on hardware. Each returns
+`CommandOutcome.APPLIED` only once the station answered or its alarm frame shows the
+alarm in the asked state; otherwise as the station actions above. A serial that is
+neither the station nor paired to it gets `()` / None and `UnsupportedError`, as does
+an int choice that is no `DeviceAlarm`. For a
+siren entity per device: create it where `device_alarms(sn)` is not empty, `turn_on` →
+trigger, `turn_off` → stop, and offer the choices as tones.
+
+A HomeBase's own serial is its station siren: the app offers sound, light and sound
+and light there, and all send the request of `async_trigger_alarm` (refused where that
+is). Do not create a second siren entity for it; the existing station siren covers it.
+
+A camera's on/off switch is the setting `camera_on_off` (bool, `True` = on) on every
+model whose handler writes it; write it with `async_set_setting("camera_on_off", on,
+device_sn=…)`. The command and its polarity come from the model's file.
 
 ### Camera images
 
