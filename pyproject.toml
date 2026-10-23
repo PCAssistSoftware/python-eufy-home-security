@@ -32,6 +32,8 @@ dependencies = [
   "cryptography>=44",
   "firebase-messaging>=0.4",
   "protobuf>=5",
+  # Every zone id of the device table, backward links included, on any host.
+  "tzdata>=2025.2",
 ]
 
 [project.scripts]
