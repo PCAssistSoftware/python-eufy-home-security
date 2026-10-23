@@ -31,7 +31,14 @@ if TYPE_CHECKING:
     )
     from .devices.device_alarm import DeviceAlarm
     from .devices.model_settings import Setting, SettingControl, SettingKind
-    from .devices.recipes import MAX_PRESET_SLOTS, MAX_ZOOM, MIN_ZOOM, PanTilt, PresetPosition
+    from .devices.recipes import (
+        MAX_PRESET_SLOTS,
+        MAX_ZOOM,
+        MIN_ZOOM,
+        PanTilt,
+        PresetPosition,
+        PtzAction,
+    )
     from .devices.sections import (
         MODES_SECTION,
         OTHER_SECTION,
@@ -103,6 +110,7 @@ if TYPE_CHECKING:
         NoCachedSessionError,
         PresetSlotsFullError,
         ProtocolError,
+        PtzActionUnsupportedError,
         RateLimitedError,
         RateLimitOrigin,
         RecordNotFoundError,
@@ -215,7 +223,8 @@ _EXPORTS: dict[str, str] = {
     ),
     **dict.fromkeys(("ModeTableStorage", "StationFeature"), "devices.station_config_support"),
     **dict.fromkeys(
-        ("MAX_PRESET_SLOTS", "MAX_ZOOM", "MIN_ZOOM", "PanTilt", "PresetPosition"), "devices.recipes"
+        ("MAX_PRESET_SLOTS", "MAX_ZOOM", "MIN_ZOOM", "PanTilt", "PresetPosition", "PtzAction"),
+        "devices.recipes",
     ),
     **dict.fromkeys(
         ("DEFAULT_QUEUE_CHUNKS", "FrameStream", "ResizePolicy", "StreamBroadcast"), "p2p.broadcast"
@@ -290,6 +299,7 @@ _EXPORTS: dict[str, str] = {
             "NoCachedSessionError",
             "PresetSlotsFullError",
             "ProtocolError",
+            "PtzActionUnsupportedError",
             "RateLimitOrigin",
             "RateLimitedError",
             "RecordNotFoundError",
@@ -483,6 +493,8 @@ __all__ = [
     "PresetSlotsFullError",
     "PresetsChanged",
     "ProtocolError",
+    "PtzAction",
+    "PtzActionUnsupportedError",
     "PushChanged",
     "PushImage",
     "PushMessageType",

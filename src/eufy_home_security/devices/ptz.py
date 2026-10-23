@@ -17,7 +17,7 @@ from types import MappingProxyType
 from typing import Final
 
 from ._ptz_data import APP_VERSION, PTZ
-from .recipes import ConnectType
+from .recipes import ConnectType, PtzAction
 
 
 class PtzForm(StrEnum):
@@ -34,10 +34,10 @@ PTZ_IDENTIFIERS: Final = (
     "ptz_action_control",
     "query_preset_positions",
     "set_ptz_cruise_preview",
-    "get_preset_position_pic",
-    "set_preset_positions",
-    "delete_preset_positions",
-    "default_preset_positions",
+    PtzAction.SLOT_PICTURE.value,
+    PtzAction.STORE.value,
+    PtzAction.DELETE.value,
+    PtzAction.SET_DEFAULT.value,
     "set_picture_zoom",
 )
 """The thing-model actions behind the library's pan/tilt, preset and zoom calls."""

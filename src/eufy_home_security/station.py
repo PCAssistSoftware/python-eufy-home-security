@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ._logging import LogThrottle, redact_serial
 from .cloud.models import CloudDevice
 from .devices.capabilities import (
+    PTZ_ACTION_NEEDS,
     PTZ_ACTIONS,
     Capability,
     DeviceProfile,
@@ -58,6 +59,7 @@ from .devices.recipes import (
     ConnectType,
     PanTilt,
     PresetPosition,
+    PtzAction,
     Recipe,
     RecipeCommand,
     SubCommand,
@@ -129,6 +131,7 @@ from .exceptions import (
     ModeInUseError,
     PresetSlotsFullError,
     ProtocolError,
+    PtzActionUnsupportedError,
     RecordNotFoundError,
     StillNotWrittenError,
     UnsupportedError,
@@ -290,6 +293,13 @@ PTZ_BUSY_ATTEMPTS: Final = 4
 """How often a preset command is re-sent while the camera answers :data:`PTZ_BUSY_CODE`."""
 PTZ_BUSY_DELAY: Final = 3.0
 """Wait between those attempts: a T8170 settles within a few seconds of a turn."""
+_PTZ_NAMES: Final[Mapping[Capability, str]] = {
+    Capability.PTZ_CONTROL: "pan/tilt control",
+    Capability.PTZ_PRESETS: "pan/tilt presets",
+    Capability.PTZ_ZOOM: "picture zoom",
+}
+"""How a refusal names each pan/tilt/zoom capability the device lacks."""
+_NOT_PAIRED: Final = "the device is not paired to this station"
 # The kinds the eufy app's battery display rule covers (the camera card).
 _BATTERY_KINDS: Final = frozenset({DeviceKind.CAMERA, DeviceKind.DOORBELL})
 FRESH_KEYFRAME_WINDOW: Final = 0.5
@@ -2901,6 +2911,10 @@ class Station:
             None,
         )
 
+    def _is_paired(self, device_sn: str) -> bool:
+        """Whether ``device_sn`` is this station or a device paired to it."""
+        return any(d.device_sn == device_sn for d in (self.device, *self.sub_devices))
+
     def _connect_type_of(self, device_sn: str) -> ConnectType:
         """How the app reaches ``device_sn``: on its own (this station's own serial when
         standalone) or through this station."""
@@ -2969,35 +2983,76 @@ class Station:
         presets (``PTZ_PRESETS``) or picture zoom (``PTZ_ZOOM``) of ``device_sn`` is
         supported through this station.
 
-        :attr:`~.devices.support.Support.VERIFIED` from the model's profile; else
-        ``DECLARED`` when the device's thing description declares every action of the
-        capability (:data:`~.devices.capabilities.PTZ_ACTIONS`) and the library sends
-        each as the device's handler does under this station (:mod:`.devices.ptz`,
-        generated from the eufy app's handlers); else ``UNKNOWN`` with the reason. A
-        model without recorded handler actions keeps its profile's own entry. Raises
-        ``ValueError`` for a capability that is not one of the three.
+        ``UNKNOWN`` with the reason for a device not paired here, or when the device's
+        thing description lacks an action of the capability
+        (:data:`~.devices.capabilities.PTZ_ACTIONS`) or the library does not send one as
+        the device's handler does under this station (:mod:`.devices.ptz`, generated from
+        the eufy app's handlers); else :attr:`~.devices.support.Support.VERIFIED` from
+        the model's profile; else ``DECLARED``. A model without recorded handler actions
+        keeps its profile's own entry. Raises ``ValueError`` for a capability that is not
+        one of the three.
         """
         actions = PTZ_ACTIONS.get(capability)
         if actions is None:
             raise ValueError(f"{capability} is not a pan/tilt/zoom capability")
+        if not self._is_paired(device_sn):
+            return Evidence(Support.UNKNOWN, _NOT_PAIRED)
+        code = self._product_code(device_sn)
+        connect = self._connect_type_of(device_sn)
+        if has_ptz_recipes(code):
+            missing = [a for a in actions if ptz_form(code, a, connect) is None]
+            if missing:
+                return Evidence(Support.UNKNOWN, self._ptz_unsupported_reason(device_sn, missing))
         profile = own_profile(device_sn)
         listed = None if profile is None else profile.capabilities.get(capability)
         if listed is not None and listed.support is Support.VERIFIED:
             return listed
-        code = self._product_code(device_sn)
         if not has_ptz_recipes(code):
             return listed or Evidence(
                 Support.UNKNOWN, f"no pan/tilt/zoom action recorded for {code or 'this model'}"
             )
-        connect = self._connect_type_of(device_sn)
-        missing = [a for a in actions if ptz_form(code, a, connect) is None]
-        if missing:
-            return Evidence(Support.UNKNOWN, self._ptz_unsupported_reason(device_sn, missing))
         return Evidence(
             Support.DECLARED,
             f"the {code} handler's {' and '.join(actions)} under {connect.value} "
             f"{'is' if len(actions) == 1 else 'are'} the library's recipe "
             f"(eufy app {ptz_app_version()})",
+        )
+
+    def ptz_action_support(self, device_sn: str, action: PtzAction) -> Evidence:
+        """How well the preset slot edit ``action`` (store, delete, default change, slot
+        picture) of ``device_sn`` is supported through this station.
+
+        ``UNKNOWN`` with the reason when a capability the action needs
+        (:data:`~.devices.capabilities.PTZ_ACTION_NEEDS`) is ``UNKNOWN`` under
+        :meth:`ptz_support`, or when the device's thing description does not declare the
+        action or the library does not send it as the device's handler does under this
+        station (:mod:`.devices.ptz`); else :attr:`~.devices.support.Support.VERIFIED`
+        from the model's profile; else ``DECLARED``. A model without recorded handler
+        actions takes the weakest grade of the capabilities it needs. Where this is
+        ``UNKNOWN``, the action's method raises
+        :class:`~.exceptions.PtzActionUnsupportedError` (the action) or
+        ``UnsupportedError`` (a capability) before sending.
+        """
+        grades = tuple(Support)
+        weakest = max(
+            (self.ptz_support(device_sn, c) for c in PTZ_ACTION_NEEDS[action]),
+            key=lambda evidence: grades.index(evidence.support),
+        )
+        if weakest.support is Support.UNKNOWN:
+            return weakest
+        code = self._product_code(device_sn)
+        connect = self._connect_type_of(device_sn)
+        if has_ptz_recipes(code) and ptz_form(code, action, connect) is None:
+            return Evidence(Support.UNKNOWN, self._ptz_unsupported_reason(device_sn, [action]))
+        profile = own_profile(device_sn)
+        listed = None if profile is None else profile.ptz_actions.get(action)
+        if listed is not None and listed.support is Support.VERIFIED:
+            return listed
+        if not has_ptz_recipes(code):
+            return weakest
+        return Evidence(
+            Support.DECLARED,
+            f"the {code} handler's {action.value} under {connect.value} is the library's recipe",
         )
 
     def config_support(self, feature: StationFeature) -> Evidence:
@@ -3045,28 +3100,40 @@ class Station:
     def _ptz_form(self, device_sn: str, action: str) -> PtzForm:
         """The form the library sends ``action`` to ``device_sn`` in (:mod:`.devices.ptz`):
         :attr:`~.devices.ptz.PtzForm.STANDARD` for a model without recorded handler
-        actions. Raises ``UnsupportedError`` when the device's handler sends it in no form
-        the library has, or its thing description does not declare it; nothing is sent."""
+        actions. Raises :class:`~.exceptions.PtzActionUnsupportedError` when the device's
+        handler sends it in no form the library has, or its thing description does not
+        declare it; nothing is sent."""
         code = self._product_code(device_sn)
         if not has_ptz_recipes(code):
             return PtzForm.STANDARD
         form = ptz_form(code, action, self._connect_type_of(device_sn))
         if form is None:
-            raise UnsupportedError(
+            raise PtzActionUnsupportedError(
                 f"{redact_serial(device_sn)}: {self._ptz_unsupported_reason(device_sn, [action])}",
+                action=action,
                 device_sn=device_sn,
             )
         return form
 
-    def _require_ptz(self, device_sn: str, capability: Capability, what: str) -> int:
+    def _require_ptz(self, device_sn: str, capability: Capability) -> int:
         """``device_sn``'s channel, after checking :meth:`ptz_support` for ``capability``;
-        ``UnsupportedError`` naming ``what`` and the reason otherwise."""
+        ``UnsupportedError`` naming it and the reason otherwise."""
         channel = self.channel_for(device_sn)
         evidence = self.ptz_support(device_sn, capability)
         if evidence.support is Support.UNKNOWN:
             raise UnsupportedError(
-                f"{redact_serial(device_sn)} has no {what}: {evidence.source}", device_sn=device_sn
+                f"{redact_serial(device_sn)} has no {_PTZ_NAMES[capability]}: {evidence.source}",
+                device_sn=device_sn,
             )
+        return channel
+
+    def _require_ptz_action(self, device_sn: str, action: PtzAction) -> int:
+        """``device_sn``'s channel, after the checks :meth:`ptz_action_support` grades:
+        each capability ``action`` needs, then the action itself; nothing is sent."""
+        channel = self.channel_for(device_sn)
+        for capability in PTZ_ACTION_NEEDS[action]:
+            self._require_ptz(device_sn, capability)
+        self._ptz_form(device_sn, action)
         return channel
 
     def media_key_type(self, channel: int) -> MediaKeyType:
@@ -3543,12 +3610,13 @@ class Station:
         when the read shows the slot as default: otherwise
         :class:`~.exceptions.CommandNotAppliedError`. A camera that refuses with
         code -502 wants ``confirm`` (the app's "set anyway?" dialog). Raises
-        ``UnsupportedError`` for a model without presets or a slot the last read
-        showed empty, and :class:`~.exceptions.DeviceBusyError` while a capture holds
-        the camera (the turn would spoil its image).
+        :class:`~.exceptions.PtzActionUnsupportedError` for a model without the default
+        action (:meth:`ptz_action_support`), ``UnsupportedError`` for one without presets
+        or a slot the last read showed empty, and :class:`~.exceptions.DeviceBusyError`
+        while a capture holds the camera (the turn would spoil its image).
         """
+        self._require_ptz_action(device_sn, PtzAction.SET_DEFAULT)
         channel = self._stored_slot(device_sn, preset)
-        self._ptz_form(device_sn, "default_preset_positions")
         self._refuse_while_capturing(device_sn)
         await self.session.async_run_recipe(
             set_default_preset(preset, confirm=confirm),
@@ -3593,7 +3661,7 @@ class Station:
         """
         if not (MIN_ZOOM <= zoom <= MAX_ZOOM):
             raise ValueError(f"zoom {zoom!r} is outside {MIN_ZOOM:g}..{MAX_ZOOM:g}")
-        channel = self._require_ptz(device_sn, Capability.PTZ_ZOOM, "picture zoom")
+        channel = self._require_ptz(device_sn, Capability.PTZ_ZOOM)
         self._ptz_form(device_sn, "set_picture_zoom")
         view_mode = self.session.merged_params().devices.get(channel, {}).get(VIEW_MODE_PARAM)
         if json_int(view_mode) == DUAL_VIEW:
@@ -3686,14 +3754,13 @@ class Station:
         :meth:`async_delete_preset` first. ``confirm`` sends the app's
         "set anyway?" answer.
 
-        Raises ``UnsupportedError`` for a model without pan/tilt control and presets
-        or a slot outside the camera's range, and :class:`~.exceptions.DeviceBusyError`
-        while a capture holds the camera (the view is the capture's, not the one to
-        keep); nothing is sent for these.
+        Raises :class:`~.exceptions.PtzActionUnsupportedError` for a model without the
+        store action (:meth:`ptz_action_support`), ``UnsupportedError`` for one without
+        pan/tilt control and presets or a slot outside the camera's range, and
+        :class:`~.exceptions.DeviceBusyError` while a capture holds the camera (the view
+        is the capture's, not the one to keep); nothing is sent for these.
         """
-        self._preset_channel(device_sn)
-        channel = self._ptz_channel(device_sn)
-        self._ptz_form(device_sn, "set_preset_positions")
+        channel = self._require_ptz_action(device_sn, PtzAction.STORE)
         self._check_slot(device_sn, preset)
         self._refuse_while_capturing(device_sn)
         await self._ptz_recipe(store_preset(preset, confirm=confirm), channel)
@@ -3725,15 +3792,14 @@ class Station:
         Raises :class:`~.exceptions.CommandNotAppliedError` when the camera already
         holds :data:`~.devices.recipes.MAX_PRESET_SLOTS` slots (before sending, when
         the last read shows it) or the read-back does not show the store or the
-        default; ``UnsupportedError`` for a model without presets or a slot outside
-        the camera's range; :class:`~.exceptions.DeviceBusyError` while a capture
+        default; :class:`~.exceptions.PtzActionUnsupportedError` for a model without the
+        store action (or, with ``make_default``, the default action);
+        ``UnsupportedError`` for one without presets or a slot outside the camera's range; :class:`~.exceptions.DeviceBusyError` while a capture
         holds the camera. Only the store and default writes change the camera.
         """
-        self._preset_channel(device_sn)
-        self._ptz_channel(device_sn)
-        self._ptz_form(device_sn, "set_preset_positions")
+        self._require_ptz_action(device_sn, PtzAction.STORE)
         if make_default:
-            self._ptz_form(device_sn, "default_preset_positions")
+            self._require_ptz_action(device_sn, PtzAction.SET_DEFAULT)
         if preset is not None:
             self._check_slot(device_sn, preset)
         self._refuse_while_capturing(device_sn)
@@ -3800,13 +3866,12 @@ class Station:
         is None until :meth:`async_set_default_preset` names another slot.
 
         Raises :class:`~.exceptions.CommandNotAppliedError` when the read-back still
-        shows the slot in use, and ``UnsupportedError`` for a model without pan/tilt
+        shows the slot in use, :class:`~.exceptions.PtzActionUnsupportedError` for a
+        model without the delete action, and ``UnsupportedError`` for one without pan/tilt
         control and presets or a slot outside the camera's range; nothing is sent for
         these.
         """
-        self._preset_channel(device_sn)
-        channel = self._ptz_channel(device_sn)
-        self._ptz_form(device_sn, "delete_preset_positions")
+        channel = self._require_ptz_action(device_sn, PtzAction.DELETE)
         self._check_slot(device_sn, preset)
         await self._ptz_recipe(delete_preset(preset), channel)
         slots = await self.async_refresh_presets(device_sn)
@@ -3823,13 +3888,12 @@ class Station:
 
         The camera's own thumbnail of the slot, taken when the slot was stored — it
         shows the slot's view without turning the camera there. Wakes a battery camera
-        but does not move it. Raises ``UnsupportedError`` for a model without pan/tilt
-        control and presets or a slot outside the camera's range; nothing is sent for
-        these.
+        but does not move it. Raises :class:`~.exceptions.PtzActionUnsupportedError`
+        for a model without the slot picture action, ``UnsupportedError`` for one without
+        pan/tilt control and presets or a slot outside the camera's range; nothing is
+        sent for these.
         """
-        self._preset_channel(device_sn)
-        channel = self._ptz_channel(device_sn)
-        self._ptz_form(device_sn, "get_preset_position_pic")
+        channel = self._require_ptz_action(device_sn, PtzAction.SLOT_PICTURE)
         self._check_slot(device_sn, preset)
         reply = await self._ptz_recipe(preset_picture(preset), channel)
         data = decode_preset_picture(reply.payload or {})
@@ -3878,7 +3942,7 @@ class Station:
 
     def _ptz_channel(self, device_sn: str) -> int:
         """``device_sn``'s channel, after checking it has pan/tilt control here."""
-        return self._require_ptz(device_sn, Capability.PTZ_CONTROL, "pan/tilt control")
+        return self._require_ptz(device_sn, Capability.PTZ_CONTROL)
 
     async def async_preset_image(
         self, device_sn: str, preset: int, *, settle: float | None = None, wait: bool = False
@@ -3983,7 +4047,7 @@ class Station:
 
     def _preset_channel(self, device_sn: str) -> int:
         """``device_sn``'s channel, after checking it has pan/tilt presets here."""
-        return self._require_ptz(device_sn, Capability.PTZ_PRESETS, "pan/tilt presets")
+        return self._require_ptz(device_sn, Capability.PTZ_PRESETS)
 
     async def _refresh_presets_while_awake(self, device_sn: str) -> None:
         """Re-read the presets of a pan/tilt camera that is awake anyway (best effort)."""
