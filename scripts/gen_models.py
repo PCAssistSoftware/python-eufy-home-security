@@ -15,11 +15,18 @@ must render to its recorded cmd/subCmd/params unless ``RELEASE_ACCEPTED`` names 
 that fails is not written and the run exits 1. ``--check`` regenerates into a temporary
 directory and compares byte for byte with ``--out``.
 
+A same-codec variant is kept when the released-keys manifest (``--released``, committed
+as ``scripts/data/released_keys.json``, not shipped) lists its key for the model; the
+generator never reads ``--out`` to decide what to write. ``--update-released REF`` unions
+the setting keys of every model file bundled at git ``REF`` (a release tag) into the
+manifest and writes nothing else.
+
 Runs on a maintainer host only (needs Node and the private cache); nothing at runtime
 executes vendor code. See docs/reference/models-schema.md.
 
     gen_models.py [PN ...] [--check] [--cache DIR] [--out DIR] [--jobs N]
                   [--labels FILE] [--trees FILE] [--titles FILE] [--app-version V]
+                  [--released FILE] [--update-released REF]
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +57,8 @@ DRIVER = ROOT / "scripts" / "gen_models_driver.js"
 DEFAULT_CACHE = ROOT / ".work" / "cache" / "things_all"
 DEFAULT_OUT = ROOT / "src" / "eufy_home_security" / "devices" / "data" / "models"
 INDEX = "INDEX.json"  # {"schema_version", "codes"}: the bundled product codes, sorted
+# {PN: sorted setting keys a release bundled}: a generator input, not package data
+DEFAULT_RELEASED = ROOT / "scripts" / "data" / "released_keys.json"
 DEFAULT_LABELS = ROOT / ".work" / "tools" / "data" / "app_choice_labels.json"
 DEFAULT_TREES = ROOT / ".work" / "tools" / "data" / "settings_trees.json"
 DEFAULT_TITLES = ROOT / ".work" / "tools" / "data" / "app_setting_titles.json"
@@ -181,11 +190,11 @@ def run_driver(
     product_code: str,
     handler: Path,
     requests: list[dict[str, Any]],
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> list[Any]:
-    """One node batch: a reply per request, in order. A switch of ``switches`` is sent as
-    the text the app writes for its state, and read back as that state."""
-    sent = [codec.to_wire(r, switches) for r in requests] if switches else requests
+    """One node batch: a reply per request, in order. A value of ``wire`` is sent as the
+    value the app writes for it, and read back as that value."""
+    sent = [codec.to_wire(r, wire) for r in requests] if wire else requests
     job = json.dumps({"handler": str(handler), "requests": sent})
     for _ in range(SIGNAL_RETRIES + 1):
         res = subprocess.run(
@@ -209,8 +218,8 @@ def run_driver(
         raise GeneratorError(f"{product_code}: driver output is not JSON: {err}") from err
     if not isinstance(replies, list) or len(replies) != len(requests):
         raise GeneratorError(f"{product_code}: driver returned {len(replies)} replies")
-    if switches:
-        return [codec.from_wire(r, rep, switches) for r, rep in zip(sent, replies, strict=True)]
+    if wire:
+        return [codec.from_wire(r, rep, wire) for r, rep in zip(sent, replies, strict=True)]
     return replies
 
 
@@ -282,6 +291,17 @@ def _param_dump(recipe: dict[str, Any] | None) -> list[dict[str, Any]]:
     return dump
 
 
+def stores_failed_conversion(rows: list[tuple[Any, dict[str, Any] | None]]) -> bool:
+    """Whether a swept write stores a value its handler could not convert (``NaN``) in
+    any parameter: the probe is no value the app writes, or the write not this setting's
+    alone."""
+    return any(
+        isinstance(item["param_value"], str) and item["param_value"] in codec.FAILED_CONVERSIONS
+        for _, recipe in rows
+        for item in _param_dump(recipe)
+    )
+
+
 @dataclass
 class Sweep:
     """One identifier's setProperty replies in one context, on both of its channels:
@@ -308,7 +328,7 @@ def sweep(
     handler: Path,
     props: list[dict[str, Any]],
     contexts: dict[str, codec.Context],
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> dict[str, dict[str, Sweep]]:
     """setProperty over every writable property's domain in every context, on both of
     each context's channels: ``{context: {identifier: Sweep}}``.
@@ -334,7 +354,7 @@ def sweep(
                         }
                     )
                     index.append((prop["identifier"], v))
-            replies = run_driver(product_code, handler, requests, switches) if requests else []
+            replies = run_driver(product_code, handler, requests, wire) if requests else []
             for (ident, v), reply in zip(index, replies, strict=True):
                 recipe = p2p(reply)
                 row = out[name].setdefault(ident, Sweep())
@@ -355,7 +375,7 @@ def read_samples(
     counts: dict[str, int],
     *,
     background: Mapping[int, Any] | None = None,
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> dict[str, list[Any]]:
     """getProperty over each recipe's own parameter dump in ``context``, per identifier,
     the way the app asks: ``commandId`` = every parameter of the device.
@@ -394,7 +414,7 @@ def read_samples(
             if len({p["param_type"] for p in dump}) > 1:
                 for p in dump:
                     ask([q for q in dump if q is not p], ident, i, p["param_type"])
-    replies = run_driver(product_code, handler, requests, switches) if requests else []
+    replies = run_driver(product_code, handler, requests, wire) if requests else []
     decoded: dict[tuple[str, int, int | None], Any] = {}
     for key, reply in zip(index, replies, strict=True):
         values = p2p(reply) or {}
@@ -441,7 +461,7 @@ def param_slots(
     seen: Mapping[int, list[str]],
     *,
     counts: dict[str, int],
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> dict[str, dict[LeafPath, str]]:
     """``{identifier: {path: "$param:<id>:<form>"}}`` for each write leaf the handler takes
     from a device parameter: null in every swept recipe (the parameter is absent there)
@@ -470,7 +490,7 @@ def param_slots(
                     }
                 )
                 asks.append((ident, param, raw))
-    replies = run_driver(product_code, handler, requests, switches) if requests else []
+    replies = run_driver(product_code, handler, requests, wire) if requests else []
     leaves: dict[tuple[str, int], list[tuple[str, dict[LeafPath, Any]]]] = {}
     for (ident, param, raw), reply in zip(asks, replies, strict=True):
         recipe = p2p(reply)
@@ -511,9 +531,12 @@ def view_reads(
     settings: dict[str, Any],
     context: codec.Context,
     counts: dict[str, int],
+    *,
+    inverted: set[str],
 ) -> None:
     """Add a per-view read to each enum whose write sends a ``quality`` per value and
-    whose handler decodes a per-view report of that quality parameter.
+    whose handler decodes a per-view report of that quality parameter. A read by the
+    inverse of the write (``inverted``) gives way to it.
 
     A multi-view camera reports such a parameter as base64 JSON
     ``{"mode_0": {"quality": q}, "mode_1": {…}, "cur_mode": m}``. Each value's quality is
@@ -572,7 +595,10 @@ def view_reads(
         quality = entry["write"]["params"]["quality"]["$map"]
         values = {codec.value_key(v): v for v in entry["values"]}
         qmap = {str(q): values[k] for k, q in quality.items() if k in values}
-        read = entry["read"] or {"param": param_of(entry), "map": {}}
+        read = entry["read"]
+        if read is None or ident in inverted:
+            read = {"param": param_of(entry), "map": {}}
+            inverted.discard(ident)
         if read["map"] is not None:
             read["map"] = {k: v for k, v in read["map"].items() if not _is_view_report(k)}
         read["view"] = {"by": matching[0], "map": dict(sorted(qmap.items()))}
@@ -650,16 +676,17 @@ def empty_value_reads(
     context: codec.Context,
     counts: dict[str, int],
     *,
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
+    skip: frozenset[str] = frozenset(),
 ) -> None:
     """Add the empty parameter value to the read map of each readable enum or bool
     whose handler decodes ``""`` to one of its values (a dump can report the parameter
-    empty)."""
+    empty). ``skip``: settings read by the inverse of their write, not by the handler."""
     asks: list[tuple[str, list[Any]]] = []
     requests: list[dict[str, Any]] = []
     for ident, entry in settings.items():
         read = entry.get("read")
-        if not isinstance(read, dict) or entry.get("bit") is not None:
+        if not isinstance(read, dict) or entry.get("bit") is not None or ident in skip:
             continue
         if entry["kind"] == "bool":
             values: list[Any] = [False, True]
@@ -674,7 +701,7 @@ def empty_value_reads(
         device["params"] = [{"param_type": read["param"], "param_value": ""}]
         requests.append({"kind": "get", "cmds": [read["param"]], "device": device})
         asks.append((ident, values))
-    replies = run_driver(product_code, handler, requests, switches) if requests else []
+    replies = run_driver(product_code, handler, requests, wire) if requests else []
     for (ident, values), reply in zip(asks, replies, strict=True):
         got = (p2p(reply) or {}).get(ident, codec.MISSING)
         hits = [v for v in values if codec.decodes_to(got, v)]
@@ -702,7 +729,7 @@ def build_context(
     reference: list[dict[str, Any]],
     background: Mapping[int, Any],
     seen: Mapping[int, list[str]],
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """The settings of one model in one context and its counters. ``background``: every
     parameter the model's writes set in any context, with one value each; ``seen``: the
@@ -714,15 +741,13 @@ def build_context(
     counts: dict[str, int] = {}
     alt = codec.alt_channel(context)
     raw = {i: s.raw for i, s in swept.items()}
-    reads = read_samples(product_code, handler, raw, context, counts, switches=switches)
+    reads = read_samples(product_code, handler, raw, context, counts, wire=wire)
     kinds = {p["identifier"]: codec.domain(p)[0] for p in props}
     # A handler keeps state between the requests of one driver run, so a read can fail
     # only for what the batch asked before it: ask each failed one again on its own.
     failed = {i for i, rows in reads.items() if codec.infer_read(kinds[i], rows)[0] is None}
     for ident in sorted(failed):
-        alone = read_samples(
-            product_code, handler, {ident: raw[ident]}, context, {}, switches=switches
-        )
+        alone = read_samples(product_code, handler, {ident: raw[ident]}, context, {}, wire=wire)
         if ident in alone and codec.infer_read(kinds[ident], alone[ident])[0] is not None:
             reads[ident] = alone[ident]
             _count(counts, "read:asked alone")
@@ -737,16 +762,15 @@ def build_context(
             context,
             counts,
             background=background,
-            switches=switches,
+            wire=wire,
         )
         for ident, rows in retry.items():
             if codec.infer_read(kinds[ident], rows)[0] is not None:
                 reads[ident] = rows
                 _count(counts, "read:with the other parameters")
-    slots = param_slots(
-        product_code, handler, context, swept, seen, counts=counts, switches=switches
-    )
+    slots = param_slots(product_code, handler, context, swept, seen, counts=counts, wire=wire)
     settings: dict[str, Any] = {}
+    inverted: set[str] = set()
     for prop in props:
         ident = prop["identifier"]
         kind, values = codec.domain(prop)
@@ -769,6 +793,12 @@ def build_context(
             read, read_note = None, None
             if result.access == "rw":
                 read, read_note = codec.infer_read(kind, reads.get(ident, []))
+                if read is None and not stores_failed_conversion(row.raw):
+                    read = codec.inverse_read(kind, reads.get(ident, []))
+                    if read is not None:
+                        inverted.add(ident)
+                        _count(counts, "read:inverse of the write")
+                        read_note = None
                 _count(counts, "read:codec" if read else "read:null")
                 if read is not None:
                     _count(counts, "read:identity" if read["map"] is None else "read:map")
@@ -793,11 +823,13 @@ def build_context(
     _raise_unaccepted(product_code, context, found, "codec mismatches")
     if reference:
         _count(counts, "reference_rows", len(reference))
-    shape_controls(product_code, handler, settings, counts, context, switches=switches)
+    shape_controls(product_code, handler, settings, counts, context, wire=wire)
     joiner.hold_members(product_code, settings, titles, counts)
-    view_reads(product_code, handler, settings, context, counts)
+    view_reads(product_code, handler, settings, context, counts, inverted=inverted)
     drop_absent_prior_updates(settings, counts)
-    empty_value_reads(product_code, handler, settings, context, counts, switches=switches)
+    empty_value_reads(
+        product_code, handler, settings, context, counts, wire=wire, skip=frozenset(inverted)
+    )
     return settings, counts
 
 
@@ -859,13 +891,15 @@ def generate(
     *,
     reference: list[dict[str, Any]] | None = None,
     titles: dict[str, Any] | None = None,
+    released: Collection[str] = (),
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """The settings-file object of one model and its counters (the base context's).
 
     ``app_labels`` / ``tree`` are the model's entries of the label and settings-tree
     files (None: TD labels only / no UI placement); ``reference`` its v1 reference rows
     (``child`` rows check the base context, ``standalone`` rows the standalone one);
-    ``titles`` the app setting-title file (None: no names, app units or variants).
+    ``titles`` the app setting-title file (None: no names, app units or variants);
+    ``released`` the model's keys in the released-keys manifest (never dropped).
     Raises CheckError when a codec does not reproduce a swept recipe or an unaccepted
     reference row.
     """
@@ -888,9 +922,9 @@ def generate(
         codec.as_switch(p, switch_texts[p["identifier"]]) if p["identifier"] in switch_texts else p
         for p in props
     ]
-    switched = {i: t for i, t in switch_texts.items() if any(p["identifier"] == i for p in props)}
+    wire = app_wire_values(props, switch_texts, joiner.screen_values(product_code, titles))
     contexts = contexts_of(product_code)
-    swept = sweep(product_code, handler, props, contexts, switched)
+    swept = sweep(product_code, handler, props, contexts, wire)
     background: dict[int, Any] = {}
     seen: dict[int, list[str]] = {}
     for rows in swept.values():
@@ -922,13 +956,12 @@ def generate(
             reference=references[name],
             background=background,
             seen=seen,
-            switches=switched,
+            wire=wire,
         )
         per_context[name] = settings
         if name == BASE:
             counts = ctx_counts
-    # A variant is dropped only where it duplicates its primary in every context.
-    drop = set.intersection(*(set(controls.same_codec_variants(s)) for s in per_context.values()))
+    drop = controls.variants_to_drop(list(per_context.values()), released)
     for name, settings in per_context.items():
         controls.drop_same_codec_variants(settings, counts if name == BASE else {}, only=drop)
         shaped = reference_mismatches(settings, references[name])
@@ -953,6 +986,27 @@ def generate(
     return doc, counts
 
 
+def app_wire_values(
+    props: list[dict[str, Any]],
+    switch_texts: Mapping[str, Mapping[bool, str]],
+    screens: Mapping[str, Mapping[str, Any]],
+) -> dict[str, tuple[tuple[Any, Any], ...]]:
+    """The values the app writes for the model's ``props``: a switch's text per state, an
+    enum's screen value per thing-description value it lists."""
+    out: dict[str, tuple[tuple[Any, Any], ...]] = {}
+    for prop in props:
+        ident = prop["identifier"]
+        if ident in switch_texts:
+            out[ident] = tuple(switch_texts[ident].items())
+        elif ident in screens:
+            screen = screens[ident]
+            _, values = codec.domain(prop)
+            out[ident] = tuple(
+                (v, screen[k]) for v in values if (k := codec.value_key(v)) in screen
+            )
+    return out
+
+
 def shape_controls(
     product_code: str,
     handler: Path,
@@ -960,7 +1014,7 @@ def shape_controls(
     counts: dict[str, int],
     context: codec.Context,
     *,
-    switches: codec.Switches | None = None,
+    wire: codec.WireValues | None = None,
 ) -> None:
     """Bit switches, flags, scales, same-write variants and controls
     (``scripts/gen_models_controls.py``), probing the handler once more in ``context``
@@ -991,7 +1045,7 @@ def shape_controls(
         for payload in [codec.value_key(v) for v in values] + controls.flag_payloads(values)
     ]
     requests = [r for *_, r in bit_reqs] + [r for *_, r in flag_reqs]
-    replies = run_driver(product_code, handler, requests, switches) if requests else []
+    replies = run_driver(product_code, handler, requests, wire) if requests else []
 
     def slotted(reply: Any) -> Any:
         recipe = p2p(reply)
@@ -1105,11 +1159,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trees", type=Path, default=DEFAULT_TREES)
     parser.add_argument("--titles", type=Path, default=DEFAULT_TITLES)
     parser.add_argument("--app-version", default=DEFAULT_APP_VERSION)
+    parser.add_argument(
+        "--released",
+        type=Path,
+        default=DEFAULT_RELEASED,
+        help="released-keys manifest: same-codec variants it lists stay as variant_of",
+    )
+    parser.add_argument(
+        "--update-released",
+        metavar="REF",
+        help="union the keys of the model files bundled at git REF into --released, then exit",
+    )
     args = parser.parse_args(argv)
+    if args.update_released:
+        try:
+            bundled = keys_at(args.update_released)
+        except GeneratorError as err:
+            print(f"gen_models: {err}", file=sys.stderr)
+            return 2
+        update_released(args.released, bundled)
+        return 0
     cache: Path = args.cache
     missing = _missing_inputs(cache, args.product_codes)
     if missing is None and not all(p.is_file() for p in (args.labels, args.trees, args.titles)):
         missing = "label, settings-tree or title data not found"
+    if missing is None and not args.released.is_file():
+        missing = f"no released-keys manifest at {args.released}"
     if missing is not None:
         print(f"gen_models: {missing}", file=sys.stderr)
         return 2
@@ -1126,11 +1201,66 @@ def main(argv: list[str] | None = None) -> int:
     return _generate_all(args, cache, args.out, quiet=False)
 
 
+def released_text(released: Mapping[str, Collection[str]]) -> str:
+    """The text of the released-keys manifest: product code -> sorted setting keys."""
+    return codec.dump({pn: sorted(set(keys)) for pn, keys in released.items()})
+
+
+def merge_released(
+    released: Mapping[str, Collection[str]], bundled: Mapping[str, Collection[str]]
+) -> dict[str, list[str]]:
+    """``released`` with the keys of ``bundled`` (product code -> setting keys) added."""
+    out = {pn: set(keys) for pn, keys in released.items()}
+    for pn, keys in bundled.items():
+        out.setdefault(pn, set()).update(keys)
+    return {pn: sorted(keys) for pn, keys in sorted(out.items())}
+
+
+def keys_at(ref: str) -> dict[str, list[str]]:
+    """The setting keys of every model file that ``INDEX.json`` lists at git ``ref``.
+
+    Raises ``GeneratorError`` when git is missing or ``ref`` bundles no readable models.
+    """
+    git = shutil.which("git")
+    if git is None:
+        raise GeneratorError("git is not on PATH")
+    folder = DEFAULT_OUT.relative_to(ROOT).as_posix()
+
+    def show(name: str) -> dict[str, Any]:
+        text = subprocess.run(
+            [git, "show", f"{ref}:{folder}/{name}"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise GeneratorError(f"{ref}:{name}: not a JSON object")
+        return data
+
+    try:
+        return {pn: sorted(show(f"{pn}.json")["settings"]) for pn in show(INDEX)["codes"]}
+    except (subprocess.CalledProcessError, KeyError) as err:
+        raise GeneratorError(f"{ref}: no bundled models at {folder}") from err
+
+
+def update_released(path: Path, bundled: Mapping[str, Collection[str]]) -> None:
+    """Union ``bundled`` (product code -> setting keys) into the manifest at ``path``."""
+    current = _read_json(path) if path.is_file() else {}
+    path.write_text(released_text(merge_released(current, bundled)), encoding="utf-8")
+
+
 def _generate_all(args: argparse.Namespace, cache: Path, out: Path, *, quiet: bool) -> int:
-    """Generate the requested models into ``out``; 1 when any model failed its check."""
+    """Generate the requested models into ``out``; 1 when any model failed its check.
+
+    Nothing in ``out`` is read: the same-codec variants kept are those the released-keys
+    manifest (``args.released``) lists.
+    """
     labels = _read_json(args.labels)
     trees = _read_json(args.trees)
     titles = _read_json(args.titles)
+    released = _read_json(args.released)
     reference = load_reference()
     pns = args.product_codes or sorted(d.name for d in cache.iterdir() if d.is_dir())
     out.mkdir(parents=True, exist_ok=True)
@@ -1145,6 +1275,7 @@ def _generate_all(args: argparse.Namespace, cache: Path, out: Path, *, quiet: bo
                 args.app_version,
                 reference=reference.get(pn),
                 titles=titles,
+                released=released.get(pn, ()),
             )
         except CheckError as err:
             print(err, file=sys.stderr)

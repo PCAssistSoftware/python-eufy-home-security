@@ -87,7 +87,9 @@ from eufy_home_security.p2p.session import (
     MediaStream,
     MemoryKeyRefreshLatch,
     P2PCredentials,
+    ParamOrigin,
     StationSession,
+    _scalar_result,
 )
 from eufy_home_security.p2p.transport import PPPPTransport
 from eufy_home_security.p2p.xzyh import Frame, FrameCipher, FrameType
@@ -380,8 +382,11 @@ async def test_a_report_under_schedule_moves_only_the_effective_mode(
     ]
 
 
-async def test_arming_the_current_mode_is_confirmed_by_read_back(station: FakeStation) -> None:
-    station.params[255][1224] = "0"  # already Away: the station will not answer the arm
+async def test_an_unanswered_arm_to_the_current_mode_is_confirmed_by_read_back(
+    station: FakeStation,
+) -> None:
+    station.params[255][1224] = "0"  # already Away
+    station.unanswered_commands = {1224}  # no result, no report
     session = make_session(station, Provider(station))
     try:
         assert await session.async_set_guard_mode(GuardMode.AWAY, timeout=1.0) == GuardMode.AWAY
@@ -401,18 +406,26 @@ async def test_report_only_off_is_refused_before_sending(station: FakeStation) -
     assert station.conn_inits == 0
 
 
-async def test_wrong_account_is_not_applied(station: FakeStation) -> None:
+async def test_an_arm_only_acknowledged_is_not_applied(
+    station: FakeStation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A receipt 0 (the station took the arm off its queue) stops the resend; with no
+    result and no report, it is no success."""
+    monkeypatch.setattr(session_module, "COMMAND_RESEND_AFTER", 0.1)
     session = make_session(station, Provider(station, account_id="f" * 40))
     try:
-        with pytest.raises(CommandNotAppliedError):
+        with pytest.raises(CommandNotAppliedError, match=r"took the arm \(receipt 0\)"):
             await session.async_set_guard_mode(GuardMode.HOME, timeout=1.0)
     finally:
         await session.async_close()
+    assert [o["cmd"] for o in station.received] == [1224]  # never resent
     assert station.guard_mode == 0
+    assert session.guard_mode != GuardMode.HOME
 
 
 async def test_arm_takes_only_its_own_reply_as_the_result(station: FakeStation) -> None:
-    # A foreign account: the station ignores every arm, so only injected frames answer.
+    # A foreign account: the station takes every arm off its queue (receipt 0) and
+    # drops it, so only injected frames answer.
     session = make_session(station, Provider(station, account_id="f" * 40))
     events: list[Event] = []
     session.subscribe(events.append)
@@ -423,17 +436,58 @@ async def test_arm_takes_only_its_own_reply_as_the_result(station: FakeStation) 
         loop.call_later(0.2, station.push_camera_event)
         with pytest.raises(CommandNotAppliedError):
             await session.async_set_guard_mode(GuardMode.HOME, timeout=1.0)
+        assert session.guard_mode != GuardMode.HOME
         reply_later(station, {"cmd": 1224, "code": -104})
         with pytest.raises(CommandRejectedError) as rejected:
             await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
-        reply_later(station, {"cmd": "1224", "code": 0})  # answered, but nothing changed
-        with pytest.raises(CommandNotAppliedError, match="answered"):
-            await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
+        assert session.guard_mode != GuardMode.HOME
+        reply_later(station, {"cmd": "1224", "code": 0})  # the arm's own zero result
+        armed = await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
     finally:
         await session.async_close()
     assert rejected.value.code == -104
+    assert armed is GuardMode.HOME
+    assert session.guard_mode is GuardMode.HOME
+    assert [e.mode for e in events if isinstance(e, GuardModeChanged)][-1] is GuardMode.HOME
+
+
+async def test_a_receipt_then_a_rejecting_result_rejects_the_arm(station: FakeStation) -> None:
+    """A GCM receipt 0 only takes the arm off the queue: the result that follows decides."""
+    session = make_session(station, Provider(station, account_id="f" * 40))
+    try:
+        await session.async_connect()
+        reply_later(station, {"cmd": 1224, "code": -104})
+        with pytest.raises(CommandRejectedError) as rejected:
+            await session.async_set_guard_mode(GuardMode.HOME, timeout=2.0)
+        receipts = session.stats().receipts_by_code
+    finally:
+        await session.async_close()
+    assert (rejected.value.command, rejected.value.code) == (1224, -104)
+    assert receipts == {"0": 1}  # the arm's receipt came first
     assert session.guard_mode != GuardMode.HOME
-    assert not any(isinstance(e, GuardModeChanged) and e.mode == GuardMode.HOME for e in events)
+
+
+@pytest.mark.parametrize("ticks", [0, 1, 2, 3, 5])
+async def test_another_requests_receipt_is_not_the_arms_result(
+    station: FakeStation, ticks: int
+) -> None:
+    """A still fetch's receipt 0, landing in any order around the arm's send, does not
+    apply an arm the station never answers."""
+    station.images["/zx/a.jpg"] = b"\xff\xd8image-A"
+    station.unanswered_commands = {1224}
+    session = make_session(station, Provider(station))
+    try:
+        await session.async_get_params()
+        still = asyncio.ensure_future(session.async_fetch_still("/zx/a.jpg"))
+        for _ in range(ticks):
+            await asyncio.sleep(0)
+        with pytest.raises(CommandNotAppliedError):
+            await session.async_set_guard_mode(GuardMode.HOME, timeout=1.0)
+        await still
+    finally:
+        await session.async_close()
+    assert station.guard_mode != GuardMode.HOME
+    assert session.guard_mode != GuardMode.HOME
 
 
 async def test_a_dump_key_the_library_does_not_read_is_kept_and_logged_once(
@@ -559,7 +613,8 @@ async def test_an_ecb_mode_report_is_an_arms_result(station: FakeStation) -> Non
     """A guard-mode report under the static key answers an arm, as the eufy app takes it;
     one that does not decode does not."""
     station.params[255][1224] = "0"
-    session = make_session(station, Provider(station, account_id="f" * 40))  # ignored
+    station.unanswered_commands = {1224}  # only the injected report answers
+    session = make_session(station, Provider(station))
     loop = asyncio.get_running_loop()
     try:
         await session.async_connect()
@@ -659,6 +714,7 @@ async def test_send_takes_only_its_own_zero_code_reply_as_applied(station: FakeS
 async def test_session_loss_mid_request_raises_instead_of_a_partial_result(
     station: FakeStation, caplog: pytest.LogCaptureFixture
 ) -> None:
+    station.unanswered_commands = {1224}
     session = make_session(station, Provider(station, account_id="f" * 40))
     loop = asyncio.get_running_loop()
     try:
@@ -4112,7 +4168,8 @@ def _result_frame(encryption: int, payload: bytes, *, ftype: int = FrameType.CMD
 def _sent(session: StationSession, ftype: int, *, ago: float = 0.0) -> None:
     """Mark a send of ``ftype`` awaiting its result, ``ago`` seconds back."""
     due = time.monotonic() - ago + session_module.RSA_RESULT_WINDOW
-    session._results_due.setdefault(ftype, []).append(due)
+    session._result_slot += 1
+    session._results_due.setdefault(ftype, []).append((due, session._result_slot))
 
 
 _NOT_HANDLED = struct.pack("<i", RECEIPT_NOT_HANDLED)
@@ -4313,8 +4370,8 @@ async def test_a_refused_recipe_raises_the_result_code(
 async def test_a_result_and_report_confirm_an_arm(
     station: FakeStation, current: bool, short_settle: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A zero result (code in clear, a noise tail) stops the arm's resend; the mode
-    report, or the read-back of a station already in the mode, confirms it."""
+    """A zero result (code in clear, a noise tail) answers the arm, whether the station
+    changes its mode or is in it already: never resent, nothing read back."""
     monkeypatch.setattr(session_module, "COMMAND_RESEND_AFTER", 0.1)
     monkeypatch.setattr(session_module, "MODE_REPORT_GRACE", 0.2)
     state_station(station, "type1").answer_encryption = FRAME_STATIC_ECB
@@ -4330,29 +4387,189 @@ async def test_a_result_and_report_confirm_an_arm(
         await session.async_close()
     assert armed == station.guard_mode == GuardMode.HOME
     assert [o["cmd"] for o in station.received] == [1224]  # answered: never resent
-    assert stats.receipts_by_code == {"0": 1 + int(current)}  # the arm's, the read-back's
+    assert stats.receipts_by_code == {"0": 1}  # the arm's
     assert stats.dropped_undecodable == 0
 
 
-async def test_an_accepted_arm_the_station_never_applies_is_not_applied(
-    station: FakeStation, short_settle: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(session_module, "COMMAND_RESEND_AFTER", 0.1)
+def standalone_camera(station: FakeStation) -> FakeStation:
+    """``station`` as a standalone camera on an RSA session that reports its mode in no
+    dump and sends no mode report: a 132-byte result with a noise tail answers an arm."""
     state_station(station, "type1").answer_encryption = FRAME_STATIC_ECB
     station.answer_tail = _NOISE
+    station.mode_reports = False
+    station.mode_in_dump = False
+    return station
+
+
+async def test_a_zero_result_applies_an_arm_without_a_mode_report(
+    station: FakeStation, short_settle: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The arm's own result code 0 is final: the mode is filed as this library's write
+    and returned at once, with no resend, no read-back and no report to wait for."""
+    monkeypatch.setattr(session_module, "COMMAND_RESEND_AFTER", 0.1)
+    standalone_camera(station)
     session = make_rsa_session(station)
+    events: list[Event] = []
+    session.subscribe(events.append)
     try:
-        await session.async_connect()
-        station.account_id = "f" * 40  # accepted, dropped without a word
-        with pytest.raises(CommandNotAppliedError, match=r"took the arm \(receipt 0\)"):
-            await session.async_set_guard_mode(GuardMode.HOME, timeout=0.5)
+        await session.async_get_params()
+        queries = station.param_queries
+        started = time.monotonic()
+        armed = await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
+        took = time.monotonic() - started
     finally:
         await session.async_close()
+    assert armed is GuardMode.HOME
+    assert took < 1.0
+    assert [o["cmd"] for o in station.received] == [1224]
+    assert station.param_queries == queries
+    assert (session.guard_mode, session.active_mode) == (GuardMode.HOME, GuardMode.HOME)
+    key = (STATION_CHANNEL, 1224)
+    assert session.params[key] == "1"
+    assert session.param_origins[key] is ParamOrigin.LOCAL_WRITE
+    assert _modes(events)[-1] == (GuardMode.HOME, GuardMode.HOME)
+
+
+async def test_a_schedule_arm_waits_past_the_slots_report_for_its_result(
+    station: FakeStation,
+) -> None:
+    """The slot's mode report answers no arm to Schedule: the result that follows it
+    confirms the selection, without a read-back."""
+    station.params[255] |= {1224: "0", 1151: "0"}
+    station.schedule_mode = GuardMode.HOME
+    station.arm_result_delay = 0.3
+    session = make_session(station, Provider(station))
+    try:
+        await session.async_get_params()
+        queries = station.param_queries
+        armed = await session.async_set_guard_mode(GuardMode.SCHEDULE, timeout=3.0)
+    finally:
+        await session.async_close()
+    assert armed is GuardMode.SCHEDULE
+    assert station.param_queries == queries
+
+
+async def test_a_zero_result_to_schedule_keeps_the_mode_in_force(
+    station: FakeStation, short_settle: None
+) -> None:
+    standalone_camera(station)
+    session = make_rsa_session(station)
+    try:
+        await session.async_get_params()
+        await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
+        armed = await session.async_set_guard_mode(GuardMode.SCHEDULE, timeout=3.0)
+    finally:
+        await session.async_close()
+    assert armed is GuardMode.SCHEDULE
+    assert (session.guard_mode, session.active_mode) == (GuardMode.SCHEDULE, GuardMode.HOME)
+    assert session.params[(STATION_CHANNEL, 1224)] == "2"
+
+
+async def test_a_mode_report_after_an_applied_arm_still_moves_the_mode(
+    station: FakeStation, short_settle: None
+) -> None:
+    """A report that follows (a change made elsewhere) wins over the filed arm, also in
+    the parameters a station whose dump lacks the mode reads."""
+    standalone_camera(station)
+    session = make_rsa_session(station)
+    try:
+        await session.async_get_params()
+        await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0)
+        station.send_alarm_mode(GuardMode.AWAY, cipher=FrameCipher.ECB)
+        await wait_until(lambda: session.guard_mode == GuardMode.AWAY)
+    finally:
+        await session.async_close()
+    assert session.active_mode is GuardMode.AWAY
+    assert session.params[(STATION_CHANNEL, 1224)] == "0"
+    assert session.params[(STATION_CHANNEL, 1151)] == "0"
+
+
+async def test_a_mode_report_files_no_parameter_a_dump_carries(
+    station: FakeStation, short_settle: None
+) -> None:
+    """A station whose dump carries the mode keeps the dump's values until the next dump."""
+    station.params[255] |= {1224: "1", 1151: "1"}
+    session = make_session(station, Provider(station))
+    try:
+        await session.async_get_params()
+        station.send_alarm_mode(GuardMode.AWAY)
+        await wait_until(lambda: session.guard_mode == GuardMode.AWAY)
+    finally:
+        await session.async_close()
+    assert session.params[(STATION_CHANNEL, 1224)] == "1"
+    assert (STATION_CHANNEL, 1224) not in session.param_origins
+
+
+@pytest.mark.parametrize("rsa", [False, True], ids=["gcm", "rsa"])
+async def test_an_arm_as_the_station_scalar(
+    station: FakeStation, rsa: bool, short_settle: None
+) -> None:
+    """The scalar form: frame type 1224, ``[u32 mode][char[128] account]`` on channel 255,
+    no payload object; the camera refuses the payload form with -103."""
+    station.refused_commands = {1224: -103}
+    station.mode_reports = False
+    station.mode_in_dump = False
+    session = make_rsa_session(station) if rsa else make_session(station, Provider(station))
+    try:
+        armed = await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0, scalar=True)
+        disarmed = await session.async_set_guard_mode(GuardMode.DISARMED, timeout=3.0, scalar=True)
+        with pytest.raises(CommandUnsupportedError) as refused:
+            await session.async_set_guard_mode(GuardMode.AWAY, timeout=3.0)
+        # An RSA session sends every command under its own key, the scalar included.
+        encryption = session._session_encryption if rsa else FRAME_STATIC_ECB
+    finally:
+        await session.async_close()
+    assert (armed, disarmed) == (GuardMode.HOME, GuardMode.DISARMED)
+    assert station.ecb_received == [(1224, 255, 1), (1224, 255, 63)]
+    assert station.ecb_encryptions == [encryption, encryption]
+    assert station.guard_mode == GuardMode.DISARMED
+    assert [o["cmd"] for o in station.received] == [1224]  # only the refused payload form
+    assert (refused.value.command, refused.value.code) == (1224, -103)
+    assert session.guard_mode is GuardMode.DISARMED
+
+
+def test_a_scalar_result_needs_its_type_and_four_bytes(station: FakeStation) -> None:
+    session = make_session(station, Provider(station))
+    replies = [
+        Frame(1224, b"", b"\x00\x00\x00"),  # too short for a result code
+        Frame(1224, b"", struct.pack("<i", -103)),
+        Frame(1225, b"", struct.pack("<i", 0)),  # another command's
+    ]
+    codes = [_scalar_result(Inbound(0, frame, session), 1224) for frame in replies]
+    assert codes == [None, -103, None]
+
+
+async def test_a_scalar_arm_refused_raises_its_code(station: FakeStation) -> None:
+    station.refused_scalars = {1224: -104}
+    session = make_session(station, Provider(station))
+    try:
+        with pytest.raises(CommandRejectedError) as err:
+            await session.async_set_guard_mode(GuardMode.HOME, timeout=3.0, scalar=True)
+    finally:
+        await session.async_close()
+    assert type(err.value) is CommandRejectedError
+    assert (err.value.command, err.value.code) == (1224, -104)
+    assert session.guard_mode != GuardMode.HOME
+
+
+async def test_a_scalar_setting_refused_as_invalid_is_unsupported(station: FakeStation) -> None:
+    station.refused_scalars = {1214: -103}
+    session = make_session(station, Provider(station))
+    try:
+        with pytest.raises(CommandUnsupportedError) as err:
+            await session.async_send_ecb_scalar(1214, 1, channel=0, timeout=3.0)
+    finally:
+        await session.async_close()
+    assert (err.value.command, err.value.code) == (1214, -103)
 
 
 @pytest.mark.parametrize(
     ("code", "error"),
-    [(RECEIPT_NOT_HANDLED, CommandUnsupportedError), (-1, CommandRejectedError)],
+    [
+        (RECEIPT_NOT_HANDLED, CommandUnsupportedError),
+        (-103, CommandUnsupportedError),
+        (-1, CommandRejectedError),
+    ],
 )
 async def test_a_result_refusing_an_arm_raises_its_code(
     station: FakeStation, code: int, error: type[CommandRejectedError]
@@ -4368,6 +4585,29 @@ async def test_a_result_refusing_an_arm_raises_its_code(
         await session.async_close()
     assert type(err.value) is error
     assert (err.value.command, err.value.code) == (1224, code)
+
+
+async def test_an_rsa_arm_takes_only_the_result_after_those_owed_before_it(
+    station: FakeStation, short_settle: None
+) -> None:
+    """A result owed to an earlier send, arriving after the arm's, is that send's: the
+    arm takes the next one."""
+    standalone_camera(station)
+    station.arm_result_delay = 0.3
+    session = make_rsa_session(station)
+    try:
+        await session.async_get_params()
+        before = dict(session.stats().receipts_by_code)
+        _sent(session, FrameType.CMD_TRANSFER)  # an earlier request, its result owed
+        arm = asyncio.ensure_future(session.async_set_guard_mode(GuardMode.HOME, timeout=3.0))
+        await wait_until(lambda: [o["cmd"] for o in station.received] == [1224])
+        station.send_receipt(FrameType.CMD_TRANSFER, -1)  # the earlier request's result
+        armed = await arm
+        after = session.stats().receipts_by_code
+    finally:
+        await session.async_close()
+    assert armed is GuardMode.HOME
+    assert after == before | {"-1": 1, "0": before.get("0", 0) + 1}
 
 
 DOORBELL_SN = "T8200P2000054321"

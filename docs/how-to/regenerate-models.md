@@ -23,7 +23,7 @@ All inputs are private and stay out of the repository:
 | thing-model cache: `<cache>/<PN>/td.json` and `<PN>Handle.mix.js` | `.work/cache/things_all` | `scripts/thing_models.py fetch` (below) |
 | app labels | `.work/tools/data/app_choice_labels.json` (`--labels`) | the app's choice titles, extracted from the app build named by `--app-version` |
 | app settings layout | `.work/tools/data/settings_trees.json` (`--trees`) | the app's settings pages, groups and order, from the same build |
-| app setting titles | `.work/tools/data/app_setting_titles.json` (`--titles`) | the app's setting titles (per identifier, per model where the app branches), control units and legacy identifier pairs, plus app behaviour read by hand: defaults the app shows, read-only statuses, option titles, settings behind a warning, held flags members, excluded actions and the string properties the app shows as an on/off switch with the text it writes for each state (`switches`: such a property is generated as a bool, swept with those texts, its write and read polarity taken from the handler); from the same build |
+| app setting titles | `.work/tools/data/app_setting_titles.json` (`--titles`) | the app's setting titles (per identifier, per model where the app branches), control units and legacy identifier pairs, plus app behaviour read by hand: defaults the app shows, read-only statuses, option titles, settings behind a warning, held flags members, excluded actions, the string properties the app shows as an on/off switch with the text it writes for each state (`switches`: such a property is generated as a bool, swept with those texts, its write and read polarity taken from the handler) and the enum choices whose app screen writes another value than the thing description lists (`screen_values`: continuous recording time writes 0 for `default:00`; the handler is swept with the screen's value, the public value stays the description's); from the same build |
 
 Node is needed for generating and for `--check`, and nowhere else: the handler runs in
 a `vm` sandbox (`scripts/gen_models_driver.js`).
@@ -56,6 +56,19 @@ reference row that is meant to change (the vendor changed the recipe) goes into
 `RELEASE_ACCEPTED` in `scripts/gen_models.py`, keyed `(PN, identifier)`, with the reason.
 `INDEX.json` lists every `<PN>.json` in the output directory, so a new product code is
 bundled by generating its file.
+
+Which keys a release shipped is an input too: `scripts/data/released_keys.json` (a
+generator input, not shipped in the package) lists per product code every setting key a
+release bundled. A variant that duplicates its primary is left out of a file unless that
+list names its key, so a key never disappears after it shipped; the output directory's
+earlier contents play no part. A released product code must stay in `INDEX.json`:
+`tests/devices/test_models_release_check.py` fails when a listed code or key is no longer
+bundled. After each release, union its keys into the list and commit it (a ref without
+bundled models exits 2):
+
+```
+uv run python scripts/gen_models.py --update-released <tag>   # the release just tagged
+```
 
 The live-open table (`devices/_live_open_data.py`: which library open reproduces each
 product handler's `open_live_stream`, per connect type) is generated from the same cache:
@@ -144,3 +157,7 @@ settings files, then the support matrix.
    every file, the index against the files, and the wheel's file set.
 5. Review the diff of the model files: a key that disappears is a breaking change for a
    consumer whose entity ids use it.
+6. Once the release is tagged, run `gen_models.py --update-released <tag>` and commit
+   `scripts/data/released_keys.json`; until then
+   `test_the_manifest_holds_every_key_of_the_latest_release` fails (it is skipped in a
+   checkout without git tags).
