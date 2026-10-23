@@ -47,6 +47,7 @@ from .models import FrameCipher, GuardMode
 
 if TYPE_CHECKING:
     from .cloud.status import DeviceListSource
+    from .devices.device_alarm import DeviceAlarm
     from .p2p.storage_info import StorageInfo
     from .station import StationState
 
@@ -255,6 +256,13 @@ class AlarmStopSource(IntEnum):
         """APP was seen live (a cloud push and the P2P tone frame); the others are only
         named by the app."""
         return _ALARM_PUSH_SEEN if self is AlarmStopSource.APP else _CUS_PUSH_MODE
+
+
+#: The event type of a tone or siren frame for an alarm the device itself stopped.
+DEVICE_STOP: Final = 1
+#: The alarm types that report an alarm off (a tone or siren frame's event type, an
+#: alarm push's ``alarm_type``): 0 ended, 1 stopped by the device, the stop codes.
+ALARM_OFF_TYPES: Final = frozenset({0, DEVICE_STOP, *AlarmStopSource})
 
 
 class ArmingSource(StrEnum):
@@ -800,10 +808,11 @@ class SecurityEvent:
     def alarm_phase(self) -> AlarmPhase | None:
         """The alarm state an alarm push reports, or None.
 
-        An ALARM push is TRIGGERED, or STOPPED when ``alarm_type`` is an
-        :class:`AlarmStopSource`; an ALARM_DELAY push is DELAY. A stop is reported
-        only when :attr:`authenticated`: an unauthenticated stop is None (a forged
-        ECB frame must not clear an alarm), with ``alarm_type`` still set.
+        An ALARM push is STOPPED when ``alarm_type`` is an :class:`AlarmStopSource`,
+        None for the other :data:`ALARM_OFF_TYPES` (0, 1: the eufy app reads such a push
+        as neither a start nor a stop), else TRIGGERED; an ALARM_DELAY push is DELAY. A
+        stop is reported only when :attr:`authenticated`: an unauthenticated stop is
+        None (a forged ECB frame must not clear an alarm), with ``alarm_type`` still set.
         Verified over FCM for triggers (``alarm_type`` 3, 25) and the app's stop (16);
         the alarm-delay push is declared from the app. For the alarm's state across both
         channels, use :class:`AlarmChanged`.
@@ -812,8 +821,10 @@ class SecurityEvent:
             case PushMessageType.ALARM_DELAY:
                 return AlarmPhase.DELAY
             case PushMessageType.ALARM:
-                if _enum_or_none(AlarmStopSource, self.alarm_type) is None:
+                if self.alarm_type not in ALARM_OFF_TYPES:
                     return AlarmPhase.TRIGGERED
+                if _enum_or_none(AlarmStopSource, self.alarm_type) is None:
+                    return None
                 return AlarmPhase.STOPPED if self.authenticated else None
             case _:
                 return None
@@ -991,6 +1002,32 @@ class AlarmChanged:
     stop_source: AlarmStopSource | None = None
     at: datetime = field(default_factory=lambda: datetime.now(UTC), compare=False)
     event_time: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DeviceAlarmChanged:
+    """A device's own alarm (siren, light or both) turned on or off.
+
+    Emitted by :class:`~.station.Station` once per transition of
+    :meth:`~.station.Station.device_alarm_on`, for every device whose
+    :meth:`~.station.Station.device_alarms` is not empty; the state is already set when
+    a subscriber receives it. Before the first report a device counts as off, so the
+    ``[0, 0]`` frames of an arm or disarm emit nothing.
+
+    ``alarm`` is the choice whose request sends the reported event type (a manual
+    alarm from the library or the app), None for any other alarm (a detection's
+    siren) and when off. ``event_type`` is the frame's or the station alarm's event
+    type (see :class:`AlarmChanged`), None for a siren whose time left ran out without
+    an end frame. ``at`` is when the library saw the change (UTC, the host clock); it is
+    not part of equality.
+    """
+
+    station_sn: str
+    device_sn: str
+    on: bool
+    alarm: DeviceAlarm | None = None
+    event_type: int | None = None
+    at: datetime = field(default_factory=lambda: datetime.now(UTC), compare=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1617,6 +1654,7 @@ type Event = (
     SecurityEvent
     | GuardModeChanged
     | AlarmChanged
+    | DeviceAlarmChanged
     | ParamChanged
     | ConnectionChanged
     | CloudProblem

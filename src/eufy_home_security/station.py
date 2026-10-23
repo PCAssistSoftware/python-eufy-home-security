@@ -11,7 +11,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -107,6 +107,7 @@ from .events import (
     AlarmChanged,
     CameraBusyChanged,
     ConnectionChanged,
+    DeviceAlarmChanged,
     DevicesChanged,
     Event,
     EventBus,
@@ -175,6 +176,7 @@ from .models import (
 )
 from .network import LanPath, lan_path_for
 from .p2p._json import json_int
+from .p2p.alarm import AlarmFrame
 from .p2p.clip import ClipWriter, MediaClip
 from .p2p.encoder import SETTLE_STANDALONE, SETTLE_STATION
 from .p2p.media import MediaFrame, MediaKeyType, Still, VideoCodec, media_key_type_for
@@ -235,6 +237,7 @@ from .p2p.station_config_codecs import (
     require_custom_mode,
 )
 from .p2p.storage_info import CMD_STORAGE, StorageInfo, StorageQuery, storage_query
+from .p2p.xzyh import FrameType
 from .station_config import (
     ModeInfo,
     StationConfig,
@@ -267,6 +270,9 @@ CAMERA_IMAGE_DAYS = 7
 """Days of history :meth:`Station.async_camera_image` searches for a camera's newest event."""
 RECORDINGS_DAYS = 2
 """Days :meth:`Station.async_list_recordings` covers by default: today and yesterday."""
+SIREN_EXPIRY_MARGIN_S: Final = 2.0
+"""Seconds past a device siren's reported time left before :meth:`Station.device_alarm_on`
+reads it off without an end frame."""
 RECORDING_QUIET = 30.0
 """Seconds past a history row's end time before :meth:`Station.recording_settled` calls its
 clip finished (clips of 6 to 37 s seen; a detection's row exists while it records)."""
@@ -1083,7 +1089,12 @@ class Station:
         """:meth:`_shared_lock` per shared parameter group."""
         self._alarm: AlarmChanged | None = None
         """The last alarm transition (:attr:`last_alarm`)."""
+        self._sirens: dict[int, bool] = {}
+        """The device-siren state per channel (:meth:`device_alarm_on`)."""
+        self._siren_expiry: dict[int, asyncio.TimerHandle] = {}
+        """The pending off of each channel whose siren is on (:data:`SIREN_EXPIRY_MARGIN_S`)."""
         session.add_dump_listener(self._on_dump_complete)
+        session.add_alarm_listener(self._on_alarm_frame)
         session.add_notify_listener(self._on_notify)
         session.subscribe(self._on_session_event)
 
@@ -1383,8 +1394,8 @@ class Station:
         """The session's events plus this station's own (:class:`~.events.DevicesChanged`,
         :class:`~.events.StationStateChanged`, :class:`~.events.StationConfigChanged`,
         :class:`~.events.CameraBusyChanged`,
-        :class:`~.events.PresetsChanged`, :class:`~.events.ZoomChanged`); returns the
-        unsubscribe callable."""
+        :class:`~.events.PresetsChanged`, :class:`~.events.ZoomChanged`,
+        :class:`~.events.DeviceAlarmChanged`); returns the unsubscribe callable."""
         unsubscribes = (self.session.subscribe(callback), self._bus.subscribe(callback))
 
         def unsubscribe() -> None:
@@ -1473,7 +1484,14 @@ class Station:
         await self.session.async_start()
 
     async def async_close(self) -> None:
-        await self.session.async_close()
+        """Close the session; forget the device-siren states and cancel their expiry."""
+        try:
+            await self.session.async_close()
+        finally:
+            for timer in self._siren_expiry.values():
+                timer.cancel()
+            self._siren_expiry.clear()
+            self._sirens.clear()
 
     @property
     def connected(self) -> bool:
@@ -1501,10 +1519,18 @@ class Station:
 
         The station records its own session's at once; :class:`~.client.EufySecurity`
         records the ones its tracker makes from a push or a disarm before emitting
-        them. A change for another station is ignored.
+        them. A change for another station is ignored. A transition is also a
+        :class:`~.events.DeviceAlarmChanged` for every device here whose alarm is the
+        station's tone (:meth:`device_alarm_on`).
         """
-        if change.station_sn == self.serial:
-            self._alarm = change
+        if change.station_sn != self.serial:
+            return
+        was = self._alarm is not None and self._alarm.alarming
+        self._alarm = change
+        if change.alarming != was:
+            self._emit_device_alarms(
+                lambda alarms, _: alarms.station_tone, change.alarming, change.event_type, change.at
+            )
 
     @property
     def last_error(self) -> EufySecurityError | None:
@@ -4246,6 +4272,107 @@ class Station:
             return None
         return alarms_for(self._product_code(device_sn), self._connect_type_of(device_sn))
 
+    def device_alarm_on(self, device_sn: str) -> bool | None:
+        """Whether ``device_sn``'s own alarm (siren, light or both) is on, from the frames
+        the eufy app reads it from; None before any, where :meth:`device_alarms` is
+        empty, for a paired device without a channel, and after :meth:`async_close`.
+        Each transition is announced as :class:`~.events.DeviceAlarmChanged`.
+
+        A device whose alarm request is SET_TONE_FILE (1201) sounds the station's alarm
+        tone: its state is the station's alarm (:attr:`alarming`, None before any
+        :class:`~.events.AlarmChanged`), as for a HomeBase's own serial, with its rules
+        (no countdown: it stays on until the next transition). Any other device reads the
+        device-siren frames (``0x04B2``) on its channel as the app does
+        (:attr:`~.p2p.alarm.AlarmFrame.alarm_state`): on for an on type with time left,
+        off for an off type (0, 1, 15/16/17) with none; other frames and parameter dumps
+        change nothing. An on state reads off when its time left plus
+        :data:`SIREN_EXPIRY_MARGIN_S` passes without another frame on that channel (an
+        end frame lost, or sent while the session was down)."""
+        alarms = self._device_alarms_of(device_sn)
+        if alarms is None:
+            return None
+        if alarms.station_tone:
+            return None if self._alarm is None else self._alarm.alarming
+        try:
+            return self._sirens.get(self._alarm_channel(device_sn))
+        except UnsupportedError:
+            return None
+
+    def _alarm_channel(self, device_sn: str) -> int:
+        """The channel ``device_sn``'s alarm is addressed on: a hub's own on channel 0, as
+        SET_TONE_FILE does; else :meth:`channel_for`."""
+        if device_sn == self.serial and own_channel(self.device) is None:
+            return 0
+        return self.channel_for(device_sn)
+
+    def _on_alarm_frame(self, frame: AlarmFrame) -> None:
+        """Take a device-siren frame's state for its channel; an on state expires after
+        its time left plus :data:`SIREN_EXPIRY_MARGIN_S`, the next counted frame on that
+        channel replaces or cancels the expiry."""
+        if frame.param_id != FrameType.SIREN_NOTIFY:
+            return
+        on = frame.alarm_state
+        if on is None:
+            return
+        timer = self._siren_expiry.pop(frame.channel, None)
+        if timer is not None:
+            timer.cancel()
+        if on:
+            self._siren_expiry[frame.channel] = asyncio.get_running_loop().call_later(
+                frame.seconds_left + SIREN_EXPIRY_MARGIN_S, self._expire_siren, frame.channel
+            )
+        self._set_siren(frame.channel, on, frame.values[0])
+
+    def _expire_siren(self, channel: int) -> None:
+        # A loop callback: an error is logged, the state is set before the emit.
+        try:
+            self._siren_expiry.pop(channel, None)
+            self._set_siren(channel, False, None)
+        except Exception:
+            _LOGGER.exception("%s: siren expiry on channel %d failed", self._log_name, channel)
+
+    def _set_siren(self, channel: int, on: bool, event_type: int | None) -> None:
+        """Store ``channel``'s siren state; announce a change for the devices it reports
+        (an unseen channel counts as off)."""
+        was = self._sirens.get(channel, False)
+        self._sirens[channel] = on
+        if was == on:
+            return
+
+        def reported(alarms: DeviceAlarms, device_sn: str) -> bool:
+            if alarms.station_tone:
+                return False
+            try:
+                return self._alarm_channel(device_sn) == channel
+            except UnsupportedError:
+                return False
+
+        self._emit_device_alarms(reported, on, event_type, datetime.now(UTC))
+
+    def _emit_device_alarms(
+        self,
+        reports: Callable[[DeviceAlarms, str], bool],
+        on: bool,
+        event_type: int | None,
+        at: datetime,
+    ) -> None:
+        """Emit :class:`~.events.DeviceAlarmChanged` for every device here with an alarm
+        whose state ``reports(alarms, device_sn)`` says changed."""
+        for device in (self.device, *self.sub_devices):
+            alarms = self._device_alarms_of(device.device_sn)
+            if alarms is None or not reports(alarms, device.device_sn):
+                continue
+            self._bus.emit(
+                DeviceAlarmChanged(
+                    station_sn=self.serial,
+                    device_sn=device.device_sn,
+                    on=on,
+                    alarm=alarms.choice_for(event_type) if on else None,
+                    event_type=event_type,
+                    at=at,
+                )
+            )
+
     async def async_trigger_device_alarm(
         self,
         device_sn: str,
@@ -4313,11 +4440,9 @@ class Station:
                 f"{redact_serial(device_sn)}: the eufy app offers no {name} alarm here",
                 device_sn=device_sn,
             )
-        own = device_sn == self.serial and own_channel(self.device) is None
-        if own:
+        if device_sn == self.serial and own_channel(self.device) is None:
             self._require_action(StationFeature.SOUND_ALARM)
-        # A hub addresses its own alarm on channel 0, as SET_TONE_FILE does.
-        channel = 0 if own else self.channel_for(device_sn)
+        channel = self._alarm_channel(device_sn)
         outcome = await self.session.async_send_alarm(
             request.command,
             render_alarm(request.params, channel=channel),

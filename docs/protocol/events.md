@@ -203,7 +203,7 @@ Derived properties, which apply the authentication rule of the frame:
 
 | property | rule | evidence |
 |---|---|---|
-| `alarm_phase` (one push; the alarm's state is [`AlarmChanged`](#alarm-lifecycle)) | msg_type 10 → `triggered`, or `stopped` when `alarm_type` is 15 keypad / 16 app / 17 HomeBase **and** the event is authenticated (an unauthenticated stop is None, `alarm_type` still set); msg_type 16 → `delay` | msg_type 10 **[verified]** over FCM: `alarm_type` 3 and 25 at a trigger, **16 when stopped from the app** (device = the station, channel 255). msg_type 16 not captured (no delay was configured). Over P2P no msg_type 10 push exists: see [Alarm over P2P](#alarm-over-p2p). |
+| `alarm_phase` (one push; the alarm's state is [`AlarmChanged`](#alarm-lifecycle)) | msg_type 10 → `triggered`, or `stopped` when `alarm_type` is 15 keypad / 16 app / 17 HomeBase **and** the event is authenticated (an unauthenticated stop is None, `alarm_type` still set), None for `alarm_type` 0 or 1 (the other off types of [alarm over P2P](#alarm-over-p2p): the eufy app reads such a push as neither a start nor a stop); msg_type 16 → `delay` | msg_type 10 **[verified]** over FCM: `alarm_type` 3 and 25 at a trigger, **16 when stopped from the app** (device = the station, channel 255). msg_type 16 not captured (no delay was configured). Over P2P no msg_type 10 push exists: see [Alarm over P2P](#alarm-over-p2p). |
 | `arming_source` | msg_type 9 and authenticated only: `user` 1 → `keypad`, 5 → `key_fob`, any other code → `app`; None without a `user` | **[app]**. Captured FCM arming pushes: `user` 2 from the app and a P2P client; **`user` 0 with `user_name` "Eufy Security" from a schedule slot** — which the rule above maps to `app` |
 
 The enum members carry this grading in code (`PushMessageType.evidence`,
@@ -251,10 +251,45 @@ Arming and disarming also send `0x04B1`/`0x04B2` `[0, 0]` on each channel next t
 encryption, like the other state frames (see
 [station state under any encryption](session-crypto.md#station-state-under-any-encryption-declared-app)),
 caches the first value per `(channel, param)` — the tone's or
-siren's event type, the light state — and emits `ParamChanged` when it moves. The tone
-frame (1201) also drives `AlarmChanged`, on transitions only: a non-zero event type that
-is not a stop code starts the alarm (`duration_s` from the seconds), `[0, 0]` ends it,
-and `[16, 0]` ends it with `stop_source` `APP`.
+siren's event type, the light state — and emits `ParamChanged` when it moves. A tone or
+siren frame reads off for the event types 0 (ended), 1 (stopped by the device), 15, 16
+and 17 (stopped from a keypad, the app, the HomeBase) and on for any other, as the eufy
+app reads them. The tone frame (1201) also drives `AlarmChanged`, on transitions only:
+an event type that reads on starts the alarm (`duration_s` from the seconds), one that
+reads off ends it, `[16, 0]` with `stop_source` `APP`. The siren frame (1202) drives
+[`DeviceAlarmChanged`](#device-alarm-state).
+
+### Device alarm state
+
+`Station.device_alarm_on(device_sn)` and `DeviceAlarmChanged(station_sn, device_sn, on,
+alarm, event_type, at)` give a device's own alarm (the eufy app's alarm button), for
+every device whose `device_alarms` is not empty **[declared: app]**. Which frame reports
+it follows the command the model's handler sends for it
+([commands.md § Device siren](commands.md#device-siren-declared-app)):
+
+| alarm request | state from | channel |
+|---|---|---|
+| 1202 `SET_DEVS_TONE_FILE` | the siren frames (`0x04B2`), counted down | the device's |
+| 1201 `SET_TONE_FILE` | the station's alarm (`AlarmChanged`, `Station.alarming`) | any: the tone's start and end may name different channels |
+
+- None before the first report, for a paired device without a channel and after
+  `async_close`; a parameter dump does not set it (the eufy app takes the siren state
+  from the frames only).
+- A siren frame sets the state as the eufy app counts it down
+  (`AlarmFrame.alarm_state`): on for an on type with time left (`values[1]`, read as
+  milliseconds above 1000), off for an off type with none; `[10, 0]` or `[16, 5]`
+  change nothing. An on state reads off (`event_type` None) when its time left plus
+  `SIREN_EXPIRY_MARGIN_S` (2 s) passes without another counted frame on that channel;
+  the countdown runs on while the session is down, `async_close` cancels it.
+- A 1201 device follows `Station.alarming`, which has no countdown: it stays on until
+  the next `AlarmChanged`.
+- One event per transition; before its first report a device counts as off, so the
+  `[0, 0]` frames of an arm or disarm emit nothing. A change of the station's alarm
+  emits one event per 1201 device of that station.
+- `alarm` is the choice whose start request sends the reported event type (10, 22, 23
+  … per model), None for any other type (25: a detection's siren) and when off.
+- The frames do not say which client sounded a manual alarm (the library and the app
+  send the same request), so the event carries no source.
 
 ### Alarm lifecycle
 
