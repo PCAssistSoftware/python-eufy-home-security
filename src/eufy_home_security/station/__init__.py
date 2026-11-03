@@ -18,6 +18,12 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .._logging import LogThrottle, redact_serial
 from ..cloud.const import scope_country
 from ..cloud.models import CloudDevice
+from ..detection_delivery import (
+    NOTIFICATION_FLAG,
+    DetectionDelivery,
+    DetectionDeliveryReport,
+    detection_delivery,
+)
 from ..devices.capabilities import (
     Capability,
     DeviceProfile,
@@ -71,7 +77,13 @@ from ..devices.recipes import (
     connect_type,
     goto_preset,
 )
-from ..devices.settings import VIEW_MODE_PARAM, Scope, report_value, scope_for_kind
+from ..devices.settings import (
+    VIEW_MODE_PARAM,
+    Scope,
+    mode_action_flags,
+    report_value,
+    scope_for_kind,
+)
 from ..devices.station_config_support import StationFeature, restart_command, station_config_models
 from ..devices.station_config_support import config_support as station_config_support
 from ..devices.support import Evidence, Support
@@ -173,7 +185,7 @@ from ..p2p.session.stats import SessionStats
 from ..p2p.station_config_codecs import Schedule
 from ..p2p.storage_info import CMD_STORAGE, StorageInfo, StorageQuery, storage_query
 from ..recordings import RecordingsPage
-from ..station_config import ModeInfo, StationConfig, stored_device_params
+from ..station_config import ModeInfo, StationConfig, build_station_config, stored_device_params
 from .alarms import AlarmWaits, StationAlarms
 from .base import _NOT_PAIRED, own_channel
 from .configuration import ConfigRules, StationConfiguration
@@ -607,6 +619,10 @@ class StationState:
         default_factory=dict, repr=False, compare=False
     )
     """The same settings by the channel the cloud lists each device on."""
+    serials_by_channel: Mapping[int, str] = field(default_factory=dict, repr=False)
+    """The cloud serial on each channel the cloud lists a device on, whether or not this
+    dump has the device's block (an offline battery camera, a sensor); a channel that two
+    devices claim is absent, and so is :data:`~..models.STATION_CHANNEL`."""
     setting_params: Mapping[int, str | None] = field(default_factory=dict, repr=False)
     """The station's own parameters as its settings read them: :attr:`params`, and the
     cloud's copy (the device list's ``params``, the ``time_zone`` field for the time-zone
@@ -1758,6 +1774,11 @@ class Station:
                 for channel, cloud in cloud_by_channel.items()
                 if cloud is not None and channel != STATION_CHANNEL
             },
+            serials_by_channel={
+                channel: cloud.device_sn
+                for channel, cloud in cloud_by_channel.items()
+                if cloud is not None and channel != STATION_CHANNEL
+            },
         )
 
     def _setting_params(
@@ -2606,6 +2627,56 @@ class Station:
             station.support,
             f"{station.source}; extended to {model.model}, which the eufy app shows as a camera",
             station.note,
+        )
+
+    def detection_delivery(
+        self, device_sn: str, *, config: StationConfig | None = None
+    ) -> DetectionDeliveryReport:
+        """Whether this station sends ``device_sn``'s detection pushes in the guard mode
+        in force (:func:`~..detection_delivery.detection_delivery`): the Notification bit
+        of the device's action in that mode's table. Off holds every detection push of
+        the device back, over P2P and through the cloud, while the mode is in force.
+
+        The mode in force is the session's latest (a dump, a mode report, a push), else
+        the configuration's. Every camera, doorbell and sensor whose kind has the
+        Notification action (:func:`~..devices.settings.mode_action_flags`) is graded;
+        the station itself, a keypad, a device of unknown kind, a device on a channel the
+        cloud lists for several devices and a device not paired here are ``UNKNOWN``.
+        No I/O. Refresh on :class:`~..events.GuardModeChanged`,
+        :class:`~..events.StationConfigChanged` and :class:`~..events.DevicesChanged`.
+
+        ``config`` is a configuration already built from this station (:attr:`config`);
+        without one, each call builds it from :attr:`state`. A coordinator grading every
+        device per refresh builds it once and passes it to each call.
+        """
+        device = next(
+            (d for d in (self.device, *self.sub_devices) if d.device_sn == device_sn), None
+        )
+        if device is None:
+            return DetectionDeliveryReport(
+                device_sn=device_sn,
+                delivery=DetectionDelivery.UNKNOWN,
+                mode=None,
+                action=None,
+                sending_modes=(),
+                reason=_NOT_PAIRED,
+            )
+        channel = self._channel_of(device)
+        kind = None if channel is None else self._configuration._kind_on(channel)
+        flags = mode_action_flags(scope_for_kind(kind), device.device_type)
+        state = self.state
+        if config is None:
+            config = None if state is None else build_station_config(state)
+        mode = self.session.active_mode
+        if mode is None and config is not None:
+            mode = config.effective_mode
+        return detection_delivery(
+            config,
+            device_sn,
+            mode=mode,
+            has_notification_action=NOTIFICATION_FLAG in flags,
+            state=state,
+            channel=channel,
         )
 
     def media_key_type(self, channel: int) -> MediaKeyType:
