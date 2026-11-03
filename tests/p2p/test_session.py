@@ -56,6 +56,7 @@ from eufy_home_security.exceptions import (
     RateLimitedError,
     RecordingRefError,
     RecordNotFoundError,
+    RefreshCooldownError,
     StationUnreachableError,
     UnsupportedError,
 )
@@ -4378,7 +4379,9 @@ class RsaProvider:
 
     ``bad_key`` serves an unparsable ``private_key`` (the cloud lowercases the base64
     on some accounts); ``cached_rsa_key`` False serves none until a refresh (a cache
-    that predates the RSA key); ``calls`` records each ``refresh`` flag asked.
+    that predates the RSA key); ``cooldown`` refuses a refresh as the cloud client's
+    cooldown does; ``calls`` records each ``refresh`` flag asked, ``options`` the other
+    keywords of each call.
     """
 
     def __init__(
@@ -4388,15 +4391,23 @@ class RsaProvider:
         rsa_key: bool = True,
         bad_key: bool = False,
         cached_rsa_key: bool = True,
+        cooldown: bool = False,
     ) -> None:
         self.station = station
         self.rsa_key = rsa_key
         self.bad_key = bad_key
         self.cached_rsa_key = cached_rsa_key
+        self.cooldown = cooldown
         self.calls: list[bool] = []
+        self.options: list[dict[str, bool]] = []
 
-    async def __call__(self, *, refresh: bool, cipher_id: int | None = None) -> P2PCredentials:
+    async def __call__(
+        self, *, refresh: bool, cipher_id: int | None = None, **options: bool
+    ) -> P2PCredentials:
         self.calls.append(refresh)
+        self.options.append(options)
+        if refresh and self.cooldown:
+            raise RefreshCooldownError("cipher refresh on cooldown", retry_after=60.0)
         if not self.rsa_key or not (refresh or self.cached_rsa_key):
             rsa_key = None
         elif self.bad_key:
@@ -5201,30 +5212,127 @@ async def test_a_static_key_rsa_session_takes_the_station_state_unauthenticated(
     assert (push.session_ecb, push.authenticated) == (False, False)
 
 
-async def test_an_rsa_conn_init_without_an_rsa_key_is_unusable_after_one_refresh(
+@pytest.mark.parametrize("cooldown", [False, True], ids=["refetched", "refetch_on_cooldown"])
+@pytest.mark.parametrize("expired", [False, True], ids=["within", "after_cooldown"])
+async def test_an_rsa_conn_init_without_an_rsa_key_runs_under_the_static_key(
     station: FakeStation,
+    cooldown: bool,
+    expired: bool,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Credentials without the RSA key are re-fetched once; still without it, the cipher
-    is unusable (not a rejected key) and no stale-key latch is set."""
-    provider = RsaProvider(station, rsa_key=False)
+    """Credentials without the RSA key (the cloud serves none for the named cipher) are
+    re-fetched once on the same link; still without it, or with the re-fetch on
+    cooldown, the session runs under the static key, as the eufy app does: one
+    CONN_INIT, no handshake failure, no error, no stale-key latch. A reconnect within
+    ``FORCED_REFRESH_COOLDOWN`` skips the re-fetch, one after it asks again; the
+    fallback is logged once."""
+    caplog.set_level(logging.DEBUG, logger=session_module.__name__)
+    if expired:
+        monkeypatch.setattr(session_module, "FORCED_REFRESH_COOLDOWN", 0.0)
+    station.cipher_id = 1
+    station.static_key_session = True
+    provider = RsaProvider(station, rsa_key=False, cooldown=cooldown)
     latch = MemoryKeyRefreshLatch()
     session = make_rsa_session(station, provider, key_refresh=latch)
     try:
-        with pytest.raises(CipherUnusableError, match="no RSA private key") as err:
+        for connects in (1, 2, 3):
             await session.async_connect()
+            assert session.static_key_session
+            assert station.conn_inits == connects
+            session._teardown("test reconnect")
+        assert session.stats().handshake_failures == 0
     finally:
         await session.async_close()
-    assert (err.value.reason, err.value.cipher_id) == ("no_rsa_key", station.cipher_id)
-    assert provider.calls == [False, True]
+    assert provider.calls == ([False, True] * 3 if expired else [False, True, False, False])
+    assert all(o == {"keys_optional": True} for o in provider.options)
     assert latch.retry_blocked_for() == 0.0
+    infos = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.INFO and "serves no RSA key for cipher 1" in r.getMessage()
+    ]
+    assert len(infos) == 1
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-async def test_an_rsa_key_missing_from_the_cache_is_fetched_once(station: FakeStation) -> None:
-    provider = RsaProvider(station, cached_rsa_key=False)
+async def test_a_keyless_rsa_cipher_skips_the_refetch_for_that_cipher_only(
+    station: FakeStation,
+) -> None:
+    """The skipped re-fetch is per cipher: a reconnect naming another cipher asks again."""
+    station.cipher_id = 1
+    station.static_key_session = True
+    provider = RsaProvider(station, rsa_key=False)
     session = make_rsa_session(station, provider)
     try:
         await session.async_connect()
+        session._teardown("test reconnect")
+        station.cipher_id = 2
+        await session.async_connect()
+        assert session.static_key_session
+        assert session.stats().cipher_id == 2
+    finally:
+        await session.async_close()
+    assert provider.calls == [False, True, False, True]
+
+
+async def test_an_ecies_conn_init_without_an_ecc_key_keeps_a_refetch_cooldown(
+    station: FakeStation,
+) -> None:
+    """Version 8 with no ``ecc_private_key`` and the re-fetch on cooldown: the cooldown
+    error, not a session."""
+
+    async def provider(*, refresh: bool, cipher_id: int | None = None) -> P2PCredentials:
+        if refresh:
+            raise RefreshCooldownError("cipher refresh on cooldown", retry_after=60.0)
+        return P2PCredentials(SYNTHETIC.account_id, "user", "")
+
+    session = StationSession(
+        SYNTHETIC.station_sn, provider, host="127.0.0.1", port=station.discovery_port
+    )
+    try:
+        with pytest.raises(RefreshCooldownError):
+            await session.async_connect()
+    finally:
+        await session.async_close()
+
+
+@pytest.mark.parametrize(
+    ("version", "options"), [(None, {}), (8, {}), (1, {"keys_optional": True})]
+)
+async def test_credentials_are_keys_optional_only_after_an_rsa_conn_init(
+    station: FakeStation, version: int | None, options: dict[str, bool]
+) -> None:
+    """Before any CONN_INIT, and after an ECIES one, the provider must serve the keys and
+    is asked without the keyword (a provider that lacks it keeps working)."""
+    provider = RsaProvider(station)
+    session = StationSession(
+        SYNTHETIC.station_sn, provider, host="127.0.0.1", port=station.discovery_port
+    )
+    session._conn_init_version = version
+    try:
+        await session._load_credentials(refresh=False)
+    finally:
+        await session.async_close()
+    assert provider.options == [options]
+
+
+@pytest.mark.parametrize("latched", [False, True], ids=["free", "latch_set"])
+async def test_an_rsa_key_missing_from_the_cache_is_fetched_once(
+    station: FakeStation, latched: bool
+) -> None:
+    """The RSA key is re-fetched on the same link (one CONN_INIT, no handshake failure),
+    also while the stale-key latch is set: a missing key is no rejected one."""
+    latch = MemoryKeyRefreshLatch()
+    if latched:
+        await latch.async_refreshed()
+    provider = RsaProvider(station, cached_rsa_key=False)
+    session = make_rsa_session(station, provider, key_refresh=latch)
+    try:
+        await session.async_connect()
         assert session.rsa_session
+        assert not session.static_key_session
+        assert (station.conn_inits, session.stats().handshake_failures) == (1, 0)
     finally:
         await session.async_close()
     assert provider.calls == [False, True]
@@ -5238,7 +5346,9 @@ async def test_a_refetched_rsa_key_that_does_not_parse_leaves_the_static_key(
     other = FakeStation().rsa_private_key_pem  # a valid key that unwraps noise
     calls: list[bool] = []
 
-    async def provider(*, refresh: bool, cipher_id: int | None = None) -> P2PCredentials:
+    async def provider(
+        *, refresh: bool, cipher_id: int | None = None, keys_optional: bool = False
+    ) -> P2PCredentials:
         calls.append(refresh)
         key = station.rsa_private_key_pem.lower() if refresh else other
         return P2PCredentials(SYNTHETIC.account_id, "user", "", rsa_private_key=key)

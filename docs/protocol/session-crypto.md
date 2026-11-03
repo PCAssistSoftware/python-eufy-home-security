@@ -134,9 +134,25 @@ key = RSA-PKCS#1-v1.5-decrypt(private_key, ciphertext) up to its first NUL, firs
   a [static-key RSA session](#static-key-rsa-sessions-declared-app).
 - Credentials without the key the station's handshake needs (no `private_key` for an
   RSA CONN_INIT, no `ecc_private_key` for version 8; a cache written before the RSA key
-  was kept holds none) are re-fetched once. Still without it, the library raises
-  `CipherUnusableError` (reason `no_rsa_key` or `no_ecc_key`) without the stale-key
-  latch.
+  was kept holds none) are re-fetched once; a re-fetch refused by the cooldown counts as
+  one. An RSA CONN_INIT re-fetches on the same link, as the app asks twice without a new
+  handshake, and the stale-key latch does not hold that re-fetch back (a missing key is
+  no rejected one). Still without it, an RSA CONN_INIT runs a
+  [static-key RSA session](#static-key-rsa-sessions-declared-app), and its later
+  connects skip the forced re-fetch of that cipher for `FORCED_REFRESH_COOLDOWN`
+  (15 minutes); version 8 raises `CipherUnusableError` (reason `no_ecc_key`). Neither
+  sets the stale-key latch.
+- After an RSA CONN_INIT the session asks its credential provider with
+  `keys_optional=True` (never with `False`: a provider without the keyword serves ECIES
+  stations unchanged). When `get_ciphers` serves no key for the cipher, either no record
+  (success with no data, `CipherUnavailableError`) or records of the cipher none of which
+  carries a key (`CipherKeyMissingError`), the provider returns the owner's credentials
+  without keys: the owner id is still required, the answer is not reported as a
+  `CloudProblem`, and the one-hour back-off on that cipher still holds, so the cloud is
+  asked again at most hourly and a key served later is used on the next connect. A
+  failed `get_ciphers` request (network, rate limit, an error code) still ends the
+  attempt. On version 8 both answers still raise (`CipherUnavailableError`,
+  `CipherKeyMissingError`, an `EmptyResponseError`).
 - Library code: `crypto.parse_conn_init`, `crypto.aes_key_from_conn_init`,
   `crypto.load_rsa_private_key`, `StationSession.rsa_session`. Not observed on hardware:
   whether the T8410's reply is clear (the 133 bytes only fit as clear: ECB needs whole
@@ -145,13 +161,15 @@ key = RSA-PKCS#1-v1.5-decrypt(private_key, ciphertext) up to its first NUL, firs
 
 ### Static-key RSA sessions **[declared: app]**
 
-Three RSA handshakes leave the session with nothing beyond the static key:
+These RSA handshakes leave the session with nothing beyond the static key:
 
 | reply | station (reporter logs) | app | library |
 |---|---|---|---|
 | cipher id ≥ 1, the RSA blob unwraps to the static key | T84A1 (cipher 42) | key = the unwrapped string, sends type 2 | same; `static_key_session` |
 | cipher id 0 (`CONN_INIT_NO_CIPHER`), no key in the blob | T8200 (132 bytes, encryption 0) | fetches no cipher key and sets none | fetches no cipher key; `static_key_session` |
 | cipher id ≥ 1, the cipher's RSA `private_key` does not parse | T84A1 (cipher 199, a lowercased key) | the key callback catches the parse error and sets no key | sets no key; `static_key_session` |
+| cipher id ≥ 1, the cloud serves no record for the cipher | T8423 (cipher 1, encryption 0) | the key lookup returns nothing and sets no key | sets no key; `static_key_session` |
+| cipher id ≥ 1, the cipher's record has no `private_key` | none reported | the key lookup returns nothing and sets no key | after one re-fetch, sets no key; `static_key_session` |
 
 - With no key set the app's sender falls back per model: a serial starting with one of
   `STATIC_KEY_FALLBACK_MODELS` (`T8001`, `T8002`, `T8010`, `T8030`, `T8021`, `T8025`)
