@@ -172,11 +172,14 @@ class SessionBudget:
         channel: int,
         *,
         trailing_frames: int = 0,
+        keyframe_number: int = 1,
         first_frame_timeout: float | None = None,
     ) -> bytes:
         """See :meth:`StationSession.async_trigger_frame`."""
         if trailing_frames < 0:
             raise ValueError("trailing_frames must not be negative")
+        if keyframe_number < 1:
+            raise ValueError("keyframe_number must be at least 1")
         self._session._raise_if_closed()
         parts: list[bytes] = []
         async with self.trigger_frame_lock:
@@ -197,14 +200,26 @@ class SessionBudget:
                 stream = await short.async_open_recording(
                     path, channel, first_frame_timeout=first_frame_timeout
                 )
+                seen = 0  # keyframes so far; parts holds the latest picture group
                 async for frame in stream:
                     if frame.kind is not MediaKind.VIDEO:
                         continue
-                    if parts and frame.is_keyframe:
-                        break  # the next picture group: only P-frames trail
-                    parts.append(frame.data)
-                    if len(parts) > trailing_frames:
+                    if frame.is_keyframe:
+                        if seen == keyframe_number:
+                            break  # the next keyframe starts another picture group
+                        seen += 1
+                        parts[:] = [frame.data]
+                    elif parts and len(parts) <= trailing_frames:
+                        parts.append(frame.data)
+                    if seen == keyframe_number and len(parts) > trailing_frames:
                         break
+                if parts and seen < keyframe_number:
+                    _LOGGER.debug(
+                        "%s: recording has %d keyframes, requested %d; using last",
+                        self._session._log_name,
+                        seen,
+                        keyframe_number,
+                    )
             finally:
                 await short.async_close()  # PPPP CLOSE: the station stops sending
                 _LOGGER.debug(

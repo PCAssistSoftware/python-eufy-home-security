@@ -3372,6 +3372,51 @@ async def test_trigger_frame_plays_on_a_short_lived_session_and_closes_it(
     assert next(o for o in station.received if o["cmd"] == 1025)["mChannel"] == 1
 
 
+async def test_trigger_frame_selects_nth_keyframe_or_last_of_short_clip(
+    station: FakeStation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Select the actual numbered GOP, keep its P-frames, and stop early."""
+    send = station.send_video
+
+    def tagged(body: bytes, *, keyframe: bool, counter: int = 0, **kw: Any) -> None:
+        send(
+            body + bytes([counter]) if keyframe else body,
+            keyframe=keyframe,
+            counter=counter,
+            **kw,
+        )
+
+    monkeypatch.setattr(station, "send_video", tagged)
+    station.recording_frames = MEDIA_GOP * 20
+    session = make_session(station, Provider(station))
+    try:
+        await session.async_get_params()
+        with pytest.raises(ValueError, match="keyframe_number"):
+            await session.async_trigger_frame("/zx/clip.zxvideo", 1, keyframe_number=0)
+
+        first = await session.async_trigger_frame("/zx/clip.zxvideo", 1)
+        assert first == MEDIA_KEYFRAME + bytes([1])
+        assert station.media_frames_sent <= MEDIA_GOP  # stopped before the next keyframe
+        selected = await session.async_trigger_frame(
+            "/zx/clip.zxvideo", 1, keyframe_number=2, trailing_frames=MEDIA_GOP * 2
+        )
+        assert selected == (
+            MEDIA_KEYFRAME + bytes([MEDIA_GOP + 1]) + MEDIA_RECORDING_PFRAME * (MEDIA_GOP - 1)
+        )
+        assert station.media_frames_sent < station.recording_frames
+
+        station.recording_frames = MEDIA_GOP * 3  # keyframes at counters 1, 5, 9
+        fallback = await session.async_trigger_frame(
+            "/zx/short.zxvideo", 1, keyframe_number=9, trailing_frames=2
+        )
+        assert fallback == (
+            MEDIA_KEYFRAME + bytes([MEDIA_GOP * 2 + 1]) + MEDIA_RECORDING_PFRAME * 2
+        )
+    finally:
+        await session.async_close()
+    assert all(req["cmd"] != 1003 for req in station.received)
+
+
 async def test_trigger_frames_take_one_short_lived_session_at_a_time_and_always_close_it(
     station: FakeStation,
 ) -> None:
@@ -5763,7 +5808,13 @@ async def test_native_dat_trigger_frame_uses_local_recording_protocol() -> None:
         await session.async_connect()
         picture = await session.async_trigger_frame(LOCAL_RECORDING_PATH, 5)
         assert picture == MEDIA_KEYFRAME
-        assert fake.native_recording_requests == [(1025, 5, LOCAL_RECORDING_PATH)]
+        # Selecting the second keyframe uses the same native .dat playback.
+        second = await session.async_trigger_frame(LOCAL_RECORDING_PATH, 5, keyframe_number=2)
+        assert second == MEDIA_KEYFRAME
+        assert fake.native_recording_requests == [
+            (1025, 5, LOCAL_RECORDING_PATH),
+            (1025, 5, LOCAL_RECORDING_PATH),
+        ]
     finally:
         await session.async_close()
         fake.stop()
