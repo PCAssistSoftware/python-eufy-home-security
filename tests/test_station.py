@@ -1334,6 +1334,30 @@ def test_setting_is_none_when_absent_never_a_default() -> None:
     assert absent.setting("watermark_set", channel=0) is None
 
 
+@pytest.mark.parametrize("serial", ["T8900P0000000001", "T90E0P0000000001"])
+@pytest.mark.parametrize(("raw", "door_open"), [("1", True), ("0", False)])
+def test_an_entry_sensors_read_only_door_status_reads_its_parameter(
+    serial: str, raw: str, door_open: bool
+) -> None:
+    """``sensor_door_status`` is a read-only bool read from parameter 1550, as the handler
+    fills it: listed without a control, and decoded from the sensor's block."""
+    sensor = CloudDevice(
+        device_sn=serial, device_type=2, name="Door", station_sn=SYNTHETIC.station_sn, channel=17
+    )
+    setting = _hub_with(sensor).setting("sensor_door_status", device_sn=serial)
+    assert (setting.writable, setting.readable, setting.control) == (False, True, None)
+    assert setting.kind.value == "bool"
+    state = _state_of({17: {1550: raw}}, sub_devices=(sensor,))
+    assert state.setting("sensor_door_status", device_sn=serial) is door_open
+    assert state.setting("sensor_door_status", channel=17) is door_open
+    assert (
+        _state_of({17: {1141: "-60"}}, sub_devices=(sensor,)).setting(
+            "sensor_door_status", device_sn=serial
+        )
+        is None
+    )  # not reported: unknown, never the default
+
+
 def test_setting_refuses_a_key_the_device_does_not_have() -> None:
     state = _settings_state()
     with pytest.raises(UnsupportedError, match="unknown setting"):
@@ -1391,6 +1415,31 @@ def test_a_standalone_device_reads_its_own_settings() -> None:
     assert state.devices[0].setting("led_on_off") is True
     assert state.setting("led_on_off", device_sn=_T8170_SN) is True
     assert state.setting("led_on_off") is True
+
+
+def test_a_standalone_devices_unreported_read_only_status_has_no_default() -> None:
+    """A read-only status only the device reports (battery level, default 100) reads
+    None while unreported, never its default; reported, it reads the report."""
+    station = _standalone_t8170()
+    battery = station.setting("battery_value")
+    assert (battery.writable, battery.readable, battery.default) == (False, True, "100")
+    state = station._state(_dump_of({0: {6014: "1"}, 255: {6014: "1"}}))
+    assert state.setting("battery_value") is None
+    assert state.setting_source("battery_value") is None
+    reported = station._state(_dump_of({0: {1101: "87"}, 255: {1101: "87"}}))
+    assert reported.setting("battery_value") == "87"
+    assert reported.setting_source("battery_value") is ValueSource.P2P
+
+
+def test_an_unreported_read_only_status_the_app_lists_keeps_its_default() -> None:
+    """A read-only status the model data lists with a default (the keypad password flag,
+    default False) reads that default while unreported."""
+    station = _station_of("T9000" + SYNTHETIC.station_sn[5:], 0)
+    flag = station.setting("hb_keypad_is_password_set")
+    assert (flag.writable, flag.readable, flag.default) == (False, True, False)
+    state = station._state(_dump_of({255: {6014: "1"}}))
+    assert state.setting("hb_keypad_is_password_set") is False
+    assert state.setting_source("hb_keypad_is_password_set") is ValueSource.APP_DEFAULT
 
 
 def _mode_table_blocks(fake: FakeStation) -> None:

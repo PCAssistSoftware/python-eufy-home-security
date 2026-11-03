@@ -60,6 +60,8 @@ SETTING_KEYS = {
     "order",
     "page",
     "section",
+    "role",
+    "shown",
     "applies_when",
     "note",
     "name",
@@ -89,6 +91,8 @@ IDENT = re.compile(r"[a-z0-9_]+")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 SERIAL = re.compile(r"T[0-9A-Z]{4}[A-Z0-9]{11}")
 SECTIONS = {s.id for s in SETTING_SECTIONS}
+ROLES = {r.value for r in model_settings.SettingRole}
+PLACES = {p.value for p in model_settings.SettingShown}
 
 
 def _load(name: str) -> ModuleType:
@@ -205,7 +209,6 @@ def _check_setting(ident: str, s: dict[str, Any], settings: dict[str, Any]) -> N
     else:
         assert present == [], present
         if s.get("note") != STATUS_NOTE:
-            assert s.get("read") is None
             assert len(parts) <= 1, s["note"]
             assert all(p in RO_NOTES for p in parts), s["note"]
     templates = [s["write"]] if "write" in s else []
@@ -224,7 +227,10 @@ def _check_setting(ident: str, s: dict[str, Any], settings: dict[str, Any]) -> N
                 assert len(arg) == 2
     read = s.get("read")
     if read is not None:
-        assert {"param", "map"} <= set(read) <= {"param", "map", "view"}
+        assert {"param", "map"} <= set(read) <= {"param", "map", "view", "no_default"}
+        if "no_default" in read:
+            assert read["no_default"] is True
+            assert s["access"] == "ro"  # a status only the device reports
         assert isinstance(read["param"], int)
         assert not isinstance(read["param"], bool)
         assert read["map"] is None or isinstance(read["map"], dict)
@@ -258,6 +264,12 @@ def _check_setting(ident: str, s: dict[str, Any], settings: dict[str, Any]) -> N
     for rule in s.get("variants", []):
         _check_variant(ident, rule, settings)
     assert s["section"] in SECTIONS, ident
+    assert s["role"] in ROLES, ident
+    if s["access"] == "rw":
+        assert s["role"] == "setting", ident  # a setting the library writes is a control
+    assert s.get("shown", "page") in PLACES, ident
+    if s["role"] == "status":
+        assert "shown" in s, ident  # a status is one the app shows
     assert ("group" in s) == ("order" in s)
     if "group" in s:
         assert isinstance(s["group"], str)
@@ -310,6 +322,8 @@ def test_model_file_matches_the_schema(code: str) -> None:
             assert item["entry"], "a contexts item changes nothing"
             assert "contexts" not in item["entry"]
             assert "section" not in item["entry"]  # one section in every context
+            assert "role" not in item["entry"]  # one role in every context
+            assert "shown" not in item["entry"]  # one place in every context
             named.update(item["names"])
     for context in sorted(named):
         resolved = {k: _in_context(v, context) for k, v in settings.items()}

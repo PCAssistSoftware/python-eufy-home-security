@@ -7,8 +7,14 @@
    "default": "0",
    "kind": "other",
    "note": "no handler write path",
-   "read": null,
-   "section": "detection"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1299
+   },
+   "role": "setting",
+   "section": "detection",
+   "shown": "card"
   },
   "audio_recording_on_off": {
    "access": "ro",
@@ -17,14 +23,18 @@
    "note": "no handler write path",
    "page": "SettingsHome",
    "read": null,
-   "section": "recording"
+   "role": "setting",
+   "section": "recording",
+   "shown": "page"
   },
   "battery_value": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "power"
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "camera_on_off": {
    "access": "ro",
@@ -32,20 +42,25 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "charging_status": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "power"
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "cloud_storage_support_trail": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "storage"
   },
   "detection_type_set": {
@@ -65,7 +80,9 @@
     },
     "param": 6071
    },
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "values": [
     5,
     6
@@ -138,7 +155,9 @@
     "map": null,
     "param": 1298
    },
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "variant_of": "detection_type_set",
    "write": {
     "cmd": 1350,
@@ -159,13 +178,19 @@
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_charging_mode": {
    "access": "ro",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "power"
   },
   "device_is_battery_device": {
@@ -173,21 +198,27 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_model": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_name": {
    "access": "rw",
@@ -195,7 +226,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -215,6 +248,7 @@
    "default": "-",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_status": {
@@ -222,7 +256,9 @@
    "default": "1",
    "kind": "other",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_storage_type": {
    "access": "ro",
@@ -234,7 +270,9 @@
     "2": "NAS"
    },
    "read": null,
+   "role": "status",
    "section": "storage",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -245,29 +283,41 @@
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "network"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6200
+   },
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
@@ -275,7 +325,9 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version": {
    "access": "ro",
@@ -283,7 +335,9 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version_time": {
    "access": "ro",
@@ -291,34 +345,52 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "hb_connect_is_connected": {
    "access": "ro",
    "default": "{parentSn:\"\",connected:false}",
    "kind": "string",
    "read": null,
-   "section": "storage"
+   "role": "status",
+   "section": "storage",
+   "shown": "page"
   },
   "hb_connect_support_version": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "storage"
+   "role": "status",
+   "section": "storage",
+   "shown": "page"
   },
   "ip_address": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "led_on_off": {
    "access": "ro",
@@ -326,7 +398,9 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
-   "section": "picture"
+   "role": "setting",
+   "section": "picture",
+   "shown": "page"
   },
   "live_bottom_hor_toolbar_list": {
    "access": "ro",
@@ -338,6 +412,7 @@
     "4": "Sound"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "system",
    "values": [
     1,
@@ -358,6 +433,7 @@
     "8": "Auto Night Vision"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "system",
    "values": [
     0,
@@ -386,7 +462,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -406,6 +484,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "live_support_long_time_watch": {
@@ -413,6 +492,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "live_support_mute": {
@@ -420,6 +500,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "live_support_record": {
@@ -427,6 +508,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "live_support_screenshot": {
@@ -434,6 +516,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "live_top_hor_toolbar_list": {
@@ -444,6 +527,7 @@
     "1": "Setting"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "system",
    "values": [
     0,
@@ -458,6 +542,7 @@
     "1": "Setting"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "system",
    "values": [
     0,
@@ -469,22 +554,36 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "microphone_on_off": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "audio"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1240
+   },
+   "role": "setting",
+   "section": "audio",
+   "shown": "page"
   },
   "montion_detection_ui_show_type": {
    "access": "ro",
    "default": "{\"HB3+AI\":1,\"HB3\":1,\"SINGLE\":1}",
    "kind": "string",
    "read": null,
-   "section": "detection"
+   "role": "status",
+   "section": "detection",
+   "shown": "page"
   },
   "motion_detection_status": {
    "access": "rw",
@@ -539,7 +638,9 @@
     },
     "param": 6040
    },
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "write": {
     "cmd": 1700,
     "subCmd": 6040,
@@ -564,6 +665,7 @@
    "note": "no handler write path",
    "page": "CustomizeRecording",
    "read": null,
+   "role": "setting",
    "section": "recording"
   },
   "nightvision_type": {
@@ -584,7 +686,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "picture",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -609,7 +713,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -629,7 +735,9 @@
    "note": "no handler write path",
    "page": "MotionDetection",
    "read": null,
+   "role": "setting",
    "section": "power",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -651,8 +759,14 @@
     "5": "USB and built-in solar charging",
     "8": "External solar panel"
    },
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 2111
+   },
+   "role": "diagnostic",
    "section": "power",
+   "shown": "card",
    "values": [
     0,
     1,
@@ -683,7 +797,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -704,15 +820,27 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "speaker_on_off": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "audio"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1241
+   },
+   "role": "setting",
+   "section": "audio",
+   "shown": "page"
   },
   "speaker_volume": {
    "access": "ro",
@@ -724,7 +852,12 @@
     "2": "Low"
    },
    "note": "no handler write path",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1230
+   },
+   "role": "setting",
    "section": "audio",
    "values": [
     2,
@@ -740,6 +873,7 @@
     "1": "H265"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "recording",
    "values": [
     0,
@@ -755,7 +889,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -767,7 +903,9 @@
    "kind": "string",
    "note": "no handler write path",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "page"
   },
   "trigger_interval_time": {
    "access": "ro",
@@ -782,7 +920,9 @@
    "note": "no handler write path",
    "page": "CustomizeRecording",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "page",
    "step": 1,
    "unit": "d"
   },
@@ -791,6 +931,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "video_clip_length": {
@@ -806,7 +947,9 @@
    "note": "no handler write path",
    "page": "CustomizeRecording",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "page",
    "step": 1,
    "unit": "d"
   },
@@ -815,6 +958,7 @@
    "default": "0",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "audio"
   },
   "video_intercom_duplex": {
@@ -822,6 +966,7 @@
    "default": "0",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "audio"
   },
   "watermark_set": {
@@ -834,7 +979,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "picture",
+   "shown": "page",
    "values": [
     0,
     1,

@@ -6,14 +6,21 @@
    "access": "ro",
    "default": "100",
    "kind": "string",
-   "read": null,
-   "section": "power"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 8001
+   },
+   "role": "status",
+   "section": "power",
+   "shown": "card"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_is_online": {
@@ -21,28 +28,40 @@
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_name": {
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 8003
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   }
  },
  "source": {

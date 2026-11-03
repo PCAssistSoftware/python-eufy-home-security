@@ -55,6 +55,8 @@ __all__ = [
     "Setting",
     "SettingControl",
     "SettingKind",
+    "SettingRole",
+    "SettingShown",
     "Value",
     "WireCommand",
     "WriteContext",
@@ -136,6 +138,30 @@ class SettingControl(StrEnum):
     """One on/off per member of a ``FLAGS`` mask."""
     TEXT = "text"
     """Free text (a ``STRING``)."""
+
+
+class SettingRole(StrEnum):
+    """What a setting is to the user, from where the eufy app shows it."""
+
+    SETTING = "setting"
+    """A control: the library writes it, or the app offers it as one (``writable`` then
+    says whether the library can write it)."""
+    STATUS = "status"
+    """A read-only state the app shows: on the device card or home page (an entry
+    sensor's door state, tamper, low battery) or as a row of a settings page."""
+    DIAGNOSTIC = "diagnostic"
+    """A read-only value the app shows nowhere (capability data, configuration JSON), or
+    one the library already reports as a device state field (battery, online, counters)."""
+
+
+class SettingShown(StrEnum):
+    """Where the eufy app shows a setting, whatever its :class:`SettingRole`."""
+
+    CARD = "card"
+    """On the device card or the home page (an entry sensor's door state, a camera's
+    battery), read there by the app."""
+    PAGE = "page"
+    """Only on a settings page: a page reads it or the app's layout places it there."""
 
 
 #: The controls each kind may carry (a ``STRING`` with a :attr:`Setting.domain` is a select).
@@ -233,6 +259,12 @@ class Setting:
     primary's. ``page`` is the eufy app screen the setting is on, ``group`` and ``order``
     its block and position there, where the app's layout names them.
 
+    ``role`` says what the setting is to the user (:class:`SettingRole`): a control, a
+    status the app shows, or a diagnostic value. A setting listed from a thing description
+    alone (no bundled file) is a diagnostic. ``shown`` says where the app shows it
+    (:class:`SettingShown`: device card or settings page), or None where it shows it
+    nowhere.
+
     ``domain`` names a library table a ``STRING`` setting's values come from
     (:data:`~.timezones.TIMEZONE_DOMAIN`: the app's device time zones). Such a setting is
     a ``SELECT``: ``values`` are the table's ids, a write takes an id and sends the
@@ -257,6 +289,8 @@ class Setting:
     order: int | None = None
     page: str | None = None
     section: str = OTHER_SECTION
+    role: SettingRole = SettingRole.SETTING
+    shown: SettingShown | None = None
     applies_when: tuple[str, Value] | None = None
     note: str | None = None
     variant_of: str | None = None
@@ -273,6 +307,8 @@ class Setting:
         default=None, repr=False
     )
     """A per-view read: which view the report's quality comes from, and quality -> value."""
+    _no_default: bool = field(default=False, repr=False)
+    """A status only the device reports: unreported, it reads None, never ``default``."""
     _write_params: frozenset[int] = field(default=frozenset(), repr=False)
     _mode_table: SettingDef | None = field(default=None, repr=False)
     """The hand-written mode-table entry a mode-table setting is written through."""
@@ -1260,6 +1296,14 @@ def _setting(code: str, key: str, entry: Any) -> Setting:
         raise type(err)(f"{key}: {err}") from err
 
 
+def _no_default(read: Any) -> bool:
+    """A read's ``no_default`` flag (False when absent): a status only the device reports."""
+    flag = read.get("no_default", False) if isinstance(read, dict) else False
+    if not isinstance(flag, bool):
+        raise TypeError("read.no_default is not a bool")
+    return flag
+
+
 def _build(code: str, key: str, entry: dict[str, Any]) -> Setting:
     kind = SettingKind(entry["kind"])
     access = entry["access"]
@@ -1297,6 +1341,8 @@ def _build(code: str, key: str, entry: dict[str, Any]) -> Setting:
     section = entry["section"]
     if section not in _SECTION_ORDER:
         raise ValueError(f"section {section!r} is not in the catalogue")
+    role = SettingRole(entry["role"])
+    shown = None if entry.get("shown") is None else SettingShown(entry["shown"])
     default = entry.get("default")
     name = _optional_str(entry, "name")
     variant_of = _optional_str(entry, "variant_of")
@@ -1345,6 +1391,8 @@ def _build(code: str, key: str, entry: dict[str, Any]) -> Setting:
         order=order,
         page=_optional_str(entry, "page"),
         section=section,
+        role=role,
+        shown=shown,
         applies_when=applies_when,
         note=note,
         variant_of=variant_of,
@@ -1357,6 +1405,7 @@ def _build(code: str, key: str, entry: dict[str, Any]) -> Setting:
         _write_table=table,
         _read_param=read_param,
         _read_map=None if read_map is None else MappingProxyType(read_map),
+        _no_default=_no_default(read),
         _read_view=read_view,
         _write_params=_template_params([write, *(table or {}).values()]),
         _variants=_variant_rules(entry.get("variants")),

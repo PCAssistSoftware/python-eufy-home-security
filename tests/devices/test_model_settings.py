@@ -18,6 +18,8 @@ from eufy_home_security.devices.model_settings import (
     Setting,
     SettingControl,
     SettingKind,
+    SettingRole,
+    SettingShown,
     WriteContext,
     WritePath,
     arms_by_scalar,
@@ -53,6 +55,29 @@ def test_power_manager_mode_round_trip() -> None:
     assert wire.value == 2
     assert wire.updates == ((1246, "2"),)
     assert setting.decode("2") == 3
+
+
+@pytest.mark.parametrize(
+    ("key", "role"),
+    [
+        ("sensor_door_status", SettingRole.STATUS),  # the device card's open/closed state
+        ("device_ability_data", SettingRole.DIAGNOSTIC),  # shown nowhere in the app
+        ("battery_value", SettingRole.DIAGNOSTIC),  # the device's battery level already
+        ("alarm_volume_value", SettingRole.SETTING),  # written by the library
+    ],
+)
+def test_a_bundled_entry_sensor_carries_each_role(key: str, role: SettingRole) -> None:
+    assert _setting("T90E0", key).role is role
+
+
+@pytest.mark.parametrize("code", ["T90E0", "T8900"])
+def test_an_entry_sensor_s_door_state_is_on_its_device_card(code: str) -> None:
+    setting = _setting(code, "sensor_door_status")
+    assert (setting.role, setting.shown) == (SettingRole.STATUS, SettingShown.CARD)
+
+
+def test_mode_table_settings_are_settings() -> None:
+    assert {s.role for s in mode_table_settings(Scope.CAMERA)} == {SettingRole.SETTING}
 
 
 def test_setting_has_no_evidence_fields() -> None:
@@ -471,7 +496,7 @@ def _write_index(root: Path, codes: object, schema_version: int = 3) -> None:
     model_settings.bundled_codes.cache_clear()
 
 
-GOOD_ENTRY = {"access": "ro", "kind": "bool", "read": None, "section": "other"}
+GOOD_ENTRY = {"access": "ro", "kind": "bool", "read": None, "section": "other", "role": "status"}
 
 
 @pytest.mark.parametrize(
@@ -566,6 +591,50 @@ def test_section_is_required(data_root: Path) -> None:
         settings_of("T0001")
 
 
+def test_role_comes_from_the_file(data_root: Path) -> None:
+    roles = {"a": "setting", "b": "status", "c": "diagnostic"}
+    _write_model(data_root, {k: {**GOOD_ENTRY, "role": r} for k, r in roles.items()})
+    loaded = settings_of("T0001")
+    assert {k: loaded[k].role for k in roles} == {
+        "a": SettingRole.SETTING,
+        "b": SettingRole.STATUS,
+        "c": SettingRole.DIAGNOSTIC,
+    }
+
+
+@pytest.mark.parametrize("role", ["control", None, 1])
+def test_role_must_be_a_known_role(data_root: Path, role: object) -> None:
+    _write_model(data_root, {"mode": {**GOOD_ENTRY, "role": role}})
+    with pytest.raises(ModelDataError, match=r"T0001\.json.*mode"):
+        settings_of("T0001")
+
+
+def test_shown_comes_from_the_file(data_root: Path) -> None:
+    shown = {"a": "card", "b": "page", "c": None}
+    entries = {k: {**GOOD_ENTRY, "shown": s} for k, s in shown.items() if s is not None}
+    _write_model(data_root, {**entries, "c": GOOD_ENTRY})
+    loaded = settings_of("T0001")
+    assert {k: loaded[k].shown for k in shown} == {
+        "a": SettingShown.CARD,
+        "b": SettingShown.PAGE,
+        "c": None,
+    }
+
+
+@pytest.mark.parametrize("shown", ["home", 1, True])
+def test_shown_must_be_a_known_place(data_root: Path, shown: object) -> None:
+    _write_model(data_root, {"mode": {**GOOD_ENTRY, "shown": shown}})
+    with pytest.raises(ModelDataError, match=r"T0001\.json.*mode"):
+        settings_of("T0001")
+
+
+def test_role_is_required(data_root: Path) -> None:
+    entry = {k: v for k, v in GOOD_ENTRY.items() if k != "role"}
+    _write_model(data_root, {"mode": entry})
+    with pytest.raises(ModelDataError, match=r"T0001\.json.*role"):
+        settings_of("T0001")
+
+
 def test_a_variant_shares_its_primary_s_section(data_root: Path) -> None:
     variant = {**GOOD_ENTRY, "variant_of": "mode", "section": "power"}
     _write_model(data_root, {"mode": GOOD_ENTRY, "mode__v1": variant})
@@ -595,6 +664,7 @@ def _report(first: int, second: int, cur_mode: int) -> str:
 
 _QUALITY = {
     "section": "recording",
+    "role": "setting",
     "kind": "enum",
     "values": [1, 2],
     "access": "rw",

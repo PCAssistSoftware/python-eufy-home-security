@@ -7,13 +7,19 @@
    "default": "{\"trigger\":[9],\"action\":[]}",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_is_online": {
@@ -21,7 +27,9 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_name": {
    "access": "rw",
@@ -29,7 +37,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -48,43 +58,67 @@
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1131
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "sensor_is_low_power": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "card"
   },
   "sensor_smoke_status": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   }
  },
  "source": {

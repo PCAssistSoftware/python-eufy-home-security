@@ -31,7 +31,13 @@ if TYPE_CHECKING:
     )
     from .devices.device_alarm import DeviceAlarm
     from .devices.live_view import Lens, LensReport, LensSource, LensView
-    from .devices.model_settings import Setting, SettingControl, SettingKind
+    from .devices.model_settings import (
+        Setting,
+        SettingControl,
+        SettingKind,
+        SettingRole,
+        SettingShown,
+    )
     from .devices.recipes import (
         MAX_PRESET_SLOTS,
         MAX_ZOOM,
@@ -220,7 +226,10 @@ _EXPORTS: dict[str, str] = {
         "cloud.status",
     ),
     "DeviceAlarm": "devices.device_alarm",
-    **dict.fromkeys(("Setting", "SettingControl", "SettingKind"), "devices.model_settings"),
+    **dict.fromkeys(
+        ("Setting", "SettingControl", "SettingKind", "SettingRole", "SettingShown"),
+        "devices.model_settings",
+    ),
     **dict.fromkeys(
         (
             "MODES_SECTION",
@@ -556,7 +565,9 @@ __all__ = [
     "Setting",
     "SettingControl",
     "SettingKind",
+    "SettingRole",
     "SettingSection",
+    "SettingShown",
     "SettingUnit",
     "SettingsCoverage",
     "SkippedDevice",

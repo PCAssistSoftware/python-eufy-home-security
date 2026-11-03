@@ -6,14 +6,25 @@
    "access": "ro",
    "default": "100",
    "kind": "string",
-   "read": null,
-   "section": "power"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1101
+   },
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_is_battery_device": {
@@ -21,14 +32,18 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_name": {
    "access": "rw",
@@ -36,7 +51,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -64,7 +81,9 @@
     },
     "param": 6287
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 6287,
@@ -83,6 +102,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_wifi_signal_strength": {
@@ -90,27 +110,42 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_support_silent_ota_switch": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_calibrate_ui_show_type": {
@@ -118,6 +153,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_notification_locked_switch": {
@@ -126,7 +162,9 @@
    "kind": "other",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 1919,
@@ -146,6 +184,7 @@
    "kind": "other",
    "note": "handler ignores the value",
    "read": null,
+   "role": "setting",
    "section": "notifications"
   },
   "smart_lock_notification_unlocked_switch": {
@@ -154,19 +193,38 @@
    "kind": "other",
    "note": "handler ignores the value",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "smart_lock_onoff_status": {
    "access": "ro",
+   "contexts": [
+    {
+     "entry": {
+      "read": null
+     },
+     "names": [
+      "standalone"
+     ]
+    }
+   ],
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1912
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "smart_lock_set_setting_params": {
    "access": "ro",
    "kind": "string",
    "note": "handler rejects the probed values",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "timezone_set": {
@@ -179,7 +237,9 @@
     "map": null,
     "param": 1215
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1215,
     "params": {

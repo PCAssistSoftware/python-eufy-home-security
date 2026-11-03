@@ -6,7 +6,12 @@
    "access": "ro",
    "kind": "string",
    "note": "handler transforms the value",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1254
+   },
+   "role": "setting",
    "section": "modes"
   },
   "battery_value": {
@@ -14,20 +19,29 @@
    "default": "100",
    "kind": "string",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "card"
   },
   "change_wifi_is_support": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_is_battery_device": {
@@ -35,21 +49,27 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_model": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_name": {
    "access": "rw",
@@ -57,7 +77,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -77,6 +99,7 @@
    "default": "-",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_silent_ota_switch": {
@@ -92,7 +115,9 @@
     },
     "param": 6287
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 6287,
@@ -111,69 +136,91 @@
    "default": "1",
    "kind": "other",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_text_event_data_type": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_wifi_name": {
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "network"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6200
+   },
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version_time": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "is_support_silent_ota_switch": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "mac_address": {
@@ -181,13 +228,16 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "smart_lock_add_fingerprint_nums": {
    "access": "ro",
    "default": "8",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_calibrate_ui_show_type": {
@@ -195,6 +245,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_get_event_type": {
@@ -202,6 +253,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_is_support_temporary_pw": {
@@ -209,6 +261,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_notification_locked_switch": {
@@ -217,7 +270,9 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "smart_lock_notification_switch": {
    "access": "ro",
@@ -225,6 +280,7 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "notifications"
   },
   "smart_lock_notification_unlocked_switch": {
@@ -233,7 +289,9 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "smart_lock_one_touch_locking_switch": {
    "access": "ro",
@@ -241,13 +299,30 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "smart_lock_onoff_status": {
    "access": "ro",
+   "contexts": [
+    {
+     "entry": {
+      "read": null
+     },
+     "names": [
+      "standalone"
+     ]
+    }
+   ],
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1912
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "smart_lock_scramble_password_switch": {
    "access": "ro",
@@ -255,6 +330,7 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "smart_lock_set_setting_params": {
@@ -262,6 +338,7 @@
    "kind": "string",
    "note": "handler rejects the probed values",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "smart_lock_wrong_try_protection_attempts": {
@@ -272,6 +349,7 @@
    "min": 3,
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system",
    "step": 1
   },
@@ -283,6 +361,7 @@
    "min": 1,
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system",
    "step": 1
   },
@@ -292,6 +371,7 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "time_format_set": {
@@ -306,7 +386,9 @@
     "map": null,
     "param": 1253
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -333,7 +415,9 @@
     "map": null,
     "param": 1215
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1215,
     "params": {

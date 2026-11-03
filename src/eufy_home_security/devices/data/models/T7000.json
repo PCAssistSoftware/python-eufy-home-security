@@ -5,15 +5,26 @@
   "accessory_ota_status": {
    "access": "ro",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 9272
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "ai_card_device_list": {
    "access": "ro",
    "kind": "string",
    "note": "handler ignores the value",
-   "read": null,
-   "section": "detection"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61503
+   },
+   "role": "setting",
+   "section": "detection",
+   "shown": "page"
   },
   "ai_card_feature_switch": {
    "access": "rw",
@@ -21,7 +32,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "write": {
     "cmd": 1350,
     "subCmd": 61507,
@@ -38,6 +51,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "detection"
   },
   "alarm_tones_mode": {
@@ -52,7 +66,9 @@
     "map": null,
     "param": 1281
    },
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "values": [
     1,
     2
@@ -81,7 +97,9 @@
     "map": null,
     "param": 1235
    },
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "step": 1,
    "write": {
     "cmd": 1235,
@@ -99,50 +117,93 @@
    "access": "ro",
    "kind": "string",
    "note": "handler transforms the value",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1256
+   },
+   "role": "setting",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_away_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61301
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_custom1_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61307
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_custom2_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61308
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_custom3_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61309
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_disarm_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61306
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_get_alarm_home_mode": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61300
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_jump_to_platform_setting_page": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_keypad_set_cus_model": {
@@ -150,25 +211,34 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "modes"
+   "role": "setting",
+   "section": "modes",
+   "shown": "page"
   },
   "arming_modedetail_alarm_rules": {
    "access": "ro",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_modedetail_devices_rules": {
    "access": "ro",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_schedule_config": {
    "access": "ro",
    "kind": "string",
    "note": "handler transforms the value",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1254
+   },
+   "role": "setting",
    "section": "modes"
   },
   "arming_selected_mode": {
@@ -179,7 +249,9 @@
    "max": 100,
    "min": -1,
    "read": null,
+   "role": "setting",
    "section": "modes",
+   "shown": "card",
    "step": 1,
    "write": {
     "cmd": 1350,
@@ -197,13 +269,16 @@
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "modes"
+   "role": "status",
+   "section": "modes",
+   "shown": "card"
   },
   "arming_support_custom_mode": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_support_geofence": {
@@ -211,6 +286,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_support_off_mode": {
@@ -218,6 +294,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_support_privacy": {
@@ -225,6 +302,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_support_query_working_mode": {
@@ -232,6 +310,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_support_show_user_name": {
@@ -239,14 +318,21 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "arming_working_mode": {
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1151
+   },
+   "role": "diagnostic",
+   "section": "modes",
+   "shown": "page"
   },
   "audio_alert_volume": {
    "access": "ro",
@@ -259,7 +345,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -271,7 +359,9 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "page"
   },
   "auto_ota_upgrade_switch": {
    "access": "rw",
@@ -282,7 +372,9 @@
     "map": null,
     "param": 9223
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 9223,
@@ -300,6 +392,7 @@
    "access": "ro",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "detection"
   },
   "database_synchronize": {
@@ -307,13 +400,19 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
+   "role": "setting",
    "section": "storage"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_agree_ai_terms_switch": {
@@ -321,6 +420,7 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
+   "role": "setting",
    "section": "detection"
   },
   "device_continuous_recording_time": {
@@ -333,7 +433,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "card",
    "values": [
     0,
     1
@@ -343,7 +445,9 @@
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_cross_cam_assistance_switch": {
    "access": "rw",
@@ -354,6 +458,7 @@
     "map": null,
     "param": 1069
    },
+   "role": "setting",
    "section": "detection",
    "write": {
     "cmd": 1350,
@@ -372,7 +477,12 @@
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1073
+   },
+   "role": "diagnostic",
    "section": "detection"
   },
   "device_cross_cam_interval": {
@@ -401,6 +511,7 @@
     },
     "param": 1070
    },
+   "role": "setting",
    "section": "detection",
    "values": [
     0,
@@ -448,7 +559,12 @@
    "access": "ro",
    "kind": "string",
    "note": "handler transforms the value",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1072
+   },
+   "role": "diagnostic",
    "section": "detection"
   },
   "device_cross_cam_tracking_swtich": {
@@ -460,6 +576,7 @@
     "map": null,
     "param": 1065
    },
+   "role": "setting",
    "section": "detection",
    "write": {
     "cmd": 1350,
@@ -478,7 +595,9 @@
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_date_format_set": {
    "access": "rw",
@@ -493,7 +612,9 @@
     "map": null,
     "param": 6469
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -517,6 +638,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "alarm"
   },
   "device_is_battery_device": {
@@ -524,35 +646,45 @@
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_linkage_mode": {
    "access": "ro",
    "kind": "string",
    "note": "handler rejects the probed values",
    "read": null,
-   "section": "detection"
+   "role": "setting",
+   "section": "detection",
+   "shown": "page"
   },
   "device_model": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_motion_detection": {
    "access": "ro",
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "detection"
+   "role": "setting",
+   "section": "detection",
+   "shown": "card"
   },
   "device_name": {
    "access": "rw",
@@ -582,7 +714,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -602,6 +736,7 @@
    "default": "-",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_silent_ota_switch": {
@@ -617,7 +752,9 @@
     },
     "param": 6287
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 6287,
@@ -635,14 +772,21 @@
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1140
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "device_storage_medium": {
    "access": "ro",
    "default": "[1]",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "storage"
   },
   "device_storage_type": {
@@ -653,7 +797,9 @@
     "0": "Local"
    },
    "read": null,
+   "role": "status",
    "section": "storage",
+   "shown": "page",
    "values": [
     0
    ]
@@ -667,6 +813,7 @@
     "3": "Pet"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "detection",
    "values": [
     1,
@@ -686,7 +833,9 @@
     "map": null,
     "param": 7003
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -709,34 +858,48 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "general_account_init_status": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "general_device_plugin_type": {
    "access": "ro",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6489
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "hb_aic_feature_available": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "detection"
+   "role": "status",
+   "section": "detection",
+   "shown": "page"
   },
   "hb_connect_storage_type": {
    "access": "rw",
@@ -745,7 +908,9 @@
     "map": null,
     "param": 3103
    },
+   "role": "setting",
    "section": "storage",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 3103,
@@ -764,12 +929,19 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "inserted_ai_card_info": {
    "access": "ro",
    "kind": "string",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61500
+   },
+   "role": "diagnostic",
    "section": "detection"
   },
   "ip_address": {
@@ -777,13 +949,16 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "is_connect_webrtc": {
    "access": "ro",
    "default": "2",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "is_device_ready_upgrade": {
@@ -791,20 +966,33 @@
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1133
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_support_familiar_face": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "detection"
   },
   "is_support_professional_alarm": {
@@ -812,6 +1000,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "alarm"
   },
   "is_support_professional_cross_camera": {
@@ -819,6 +1008,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "is_support_professional_guard": {
@@ -826,6 +1016,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "is_support_silent_ota_switch": {
@@ -833,6 +1024,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "is_support_webrtc": {
@@ -840,6 +1032,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "mac_address": {
@@ -847,21 +1040,31 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "model_config": {
    "access": "ro",
    "default": "{\"GoAnywhere\":1, \"SwipePanTilt\":1}",
    "kind": "string",
    "read": null,
-   "section": "recording"
+   "role": "status",
+   "section": "recording",
+   "shown": "page"
   },
   "notification_alarm_delay_value": {
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "modes"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1282
+   },
+   "role": "status",
+   "section": "modes",
+   "shown": "page"
   },
   "notification_ignore_switch": {
    "access": "rw",
@@ -873,7 +1076,9 @@
     "map": null,
     "param": 1283
    },
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 1283,
@@ -890,15 +1095,23 @@
   "nvr_get_device_volume": {
    "access": "ro",
    "kind": "string",
-   "read": null,
-   "section": "audio"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 9231
+   },
+   "role": "status",
+   "section": "audio",
+   "shown": "page"
   },
   "nvr_motion_detection": {
    "access": "ro",
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "detection"
+   "role": "setting",
+   "section": "detection",
+   "shown": "card"
   },
   "playback_play_speed": {
    "access": "ro",
@@ -910,7 +1123,12 @@
     "3": "16x"
    },
    "note": "handler ignores the value",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6001
+   },
+   "role": "setting",
    "section": "recording",
    "values": [
     0,
@@ -930,7 +1148,9 @@
     "map": null,
     "param": 1292
    },
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "step": 1,
    "write": {
     "cmd": 1350,
@@ -950,20 +1170,28 @@
    "default": "10011",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "setting_current_connection_type": {
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "network"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1265
+   },
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "setting_model_config": {
    "access": "ro",
    "default": "{\"config\":{\"hb_migration_supported_list\":{\"T8010\":{\"T8170\":\"3.3.0.0\",\"T8410P5\":\"3.3.1.8\",\"T8224\":\"3.4.4.8\",\"T8162\":\"3.1.1.3\",\"T8416\":\"1.5.5.0\",\"T8214\":\"3.2.1.2\",\"T8425\":\"1.6.0.6\",\"T8426\":\"1.1.9.2\",\"T8417\":\"1.2.0.6\",\"T8213\":\"0.1.9.2\",\"T8223\":\"3.3.4.8\",\"T8210P33\":\"3.0.8.2\",\"T8210P34\":\"3.0.8.2\",\"T8210P64\":\"3.0.8.2\",\"T8222\":\"4.2.8\",\"T8161\":\"3.4.3.0\",\"T8160P0\":\"3.2.4.8\",\"T8160P1\":\"3.2.4.8\",\"T8160P2\":\"3.2.4.8\",\"T8160T2\":\"3.2.4.8\",\"T8160T3\":\"1.6.2.4\",\"T8142T7\":\"3.0.5.7\",\"T8113T7\":\"3.0.6.4\",\"T8140P7\":\"3.0.7.2\",\"T8171\":\"1.1.6.2\",\"T8134P2\":\"3.3.2.2\",\"T813452\":\"3.3.2.2\",\"T8B00511\":\"3.3.2.2\",\"T8114\":\"0.0.0.0\",\"T8144\":\"1.0.3.9\",\"T8172\":\"0.0.0.0\",\"T8173\":\"0.0.0.0\",\"T8170T2\":\"3.2.6.6\",\"T817052\":\"3.2.6.6\",\"T821452\":\"1.0.1.6\"},\"T8030\":{\"T8170\":\"3.3.0.0\",\"T8410P5\":\"3.3.1.8\",\"T8224\":\"3.4.4.8\",\"T8162\":\"3.1.1.3\",\"T8416\":\"1.5.5.0\",\"T8214\":\"3.2.1.2\",\"T8425\":\"1.6.0.6\",\"T8426\":\"1.1.9.2\",\"T8417\":\"1.2.0.6\",\"T8213\":\"0.1.9.2\",\"T8223\":\"3.3.4.8\",\"T8210P33\":\"3.0.8.2\",\"T8210P34\":\"3.0.8.2\",\"T8210P64\":\"3.0.8.2\",\"T8222\":\"4.2.8\",\"T8161\":\"3.4.3.0\",\"T8160P0\":\"3.2.4.8\",\"T8160P1\":\"3.2.4.8\",\"T8160P2\":\"3.2.4.8\",\"T8160T2\":\"3.2.4.8\",\"T8160T3\":\"1.6.2.4\",\"T8142T7\":\"3.0.5.7\",\"T8113T7\":\"3.0.6.4\",\"T8140P7\":\"3.0.7.2\",\"T8171\":\"1.1.6.2\",\"T8134P2\":\"3.3.2.2\",\"T813452\":\"3.3.2.2\",\"T8B00511\":\"3.3.2.2\",\"T8114\":\"0.0.0.0\",\"T8144\":\"1.0.3.9\",\"T8172\":\"0.0.0.0\",\"T8173\":\"0.0.0.0\",\"T8170T2\":\"3.2.6.6\",\"T817052\":\"3.2.6.6\",\"T821452\":\"1.0.1.6\"}},\"currentHbMinVersion\":\"4.2.1.8\",\"isNeedCurrentHbMinVersion\":true}}",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "support_multiple_live_stream": {
@@ -971,6 +1199,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "support_smart_search_switch": {
@@ -978,6 +1207,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "detection"
   },
   "switching_notification": {
@@ -998,7 +1228,9 @@
     "map": null,
     "param": 1283
    },
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 1283,
@@ -1017,7 +1249,9 @@
    "kind": "string",
    "note": "handler ignores the value",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "page"
   },
   "system_notification_master_switch": {
    "access": "rw",
@@ -1028,7 +1262,9 @@
     "map": null,
     "param": 9216
    },
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "write": {
     "cmd": 1350,
     "subCmd": 9216,
@@ -1054,7 +1290,9 @@
    },
    "note": "handler rejects some values",
    "read": null,
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -1075,7 +1313,9 @@
     "map": null,
     "param": 1253
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -1102,7 +1342,9 @@
     "map": null,
     "param": 1215
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "write": {
     "cmd": 1215,
     "params": {
@@ -1134,7 +1376,9 @@
     },
     "param": 1296
    },
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1

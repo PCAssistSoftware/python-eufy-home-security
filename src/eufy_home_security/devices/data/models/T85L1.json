@@ -6,14 +6,25 @@
    "access": "ro",
    "default": "100",
    "kind": "string",
-   "read": null,
-   "section": "power"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1101
+   },
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_is_battery_device": {
@@ -21,27 +32,42 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_name": {
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1217
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "device_power_saving_mode": {
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6063
+   },
+   "role": "setting",
    "section": "power"
   },
   "device_silent_ota_switch": {
@@ -49,14 +75,25 @@
    "default": true,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 6287
+   },
+   "role": "setting",
+   "section": "system",
+   "shown": "page"
   },
   "device_text_event_data_type": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_wifi_signal_strength": {
@@ -64,27 +101,42 @@
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_support_mqtt": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "is_support_silent_ota_switch": {
@@ -92,6 +144,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "power_manager_mode": {
@@ -106,7 +159,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "power",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -119,6 +174,7 @@
    "default": "8",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_auto_lock_type": {
@@ -126,6 +182,7 @@
    "default": "3",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_calibrate_ui_show_type": {
@@ -133,6 +190,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_connect_to_wifi_bridge": {
@@ -140,6 +198,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "smart_lock_get_event_type": {
@@ -147,6 +206,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_integrate_with_doorbell_or_camera": {
@@ -154,6 +214,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_is_support_new_schedule_ui": {
@@ -161,6 +222,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_is_support_one_time_user": {
@@ -168,6 +230,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_is_support_temporary_pw": {
@@ -175,6 +238,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_notification_locked_switch": {
@@ -183,7 +247,9 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "smart_lock_notification_switch": {
    "access": "ro",
@@ -191,6 +257,7 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "notifications"
   },
   "smart_lock_notification_unlocked_switch": {
@@ -199,13 +266,16 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "smart_lock_one_touch_locking_type": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_onoff_status": {
@@ -213,13 +283,16 @@
    "kind": "string",
    "note": "handler rejects the probed values",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "smart_lock_scramble_password_type": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_set_timezone": {
@@ -227,6 +300,7 @@
    "kind": "string",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system"
   },
   "smart_lock_setting_manage_access": {
@@ -234,6 +308,7 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   }
  },

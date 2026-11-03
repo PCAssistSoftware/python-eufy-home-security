@@ -32,10 +32,12 @@ are 1-space-indented JSON with a trailing newline, and a re-run gives the same b
 | `access` | `rw`: the handler has a value-dependent write. `ro`: it has none, or the setting is a status the eufy app only reads (`hb_keypad_is_password_set`) |
 | `write` | Recipe template (base context, below) |
 | `write_table` | `{"<value>": recipe}` when the recipe's shape depends on the value. It replaces `write` |
-| `read` | `{"param": <id>, "map": null}`: the parameter's value is the public value's string form. `{"param": <id>, "map": {"<param value>": <public value>}}`: decode through the map. Either may carry `view` (below). `null`: not readable. The generator takes it from the handler's getProperty of each written value. An enum whose getProperty does not return the written value, but whose write stores every value as its own parameter value (no failed conversion such as `NaN`), is read by the inverse of the write unless a per-view read decodes it: the value read is the one the client wrote. The eufy app's own display of the watermark setting (T8414, T8440, T8442) differs from it |
+| `read` | `{"param": <id>, "map": null}`: the parameter's value is the public value's string form. `{"param": <id>, "map": {"<param value>": <public value>}}`: decode through the map. Either may carry `view` (below). `null`: not readable. The generator takes it from the handler's getProperty of each written value; for a setting without a write, from the one parameter the handler fills it from (located once, in the base context: the parameter ids the handler's code names are held at two values, in ascending and in descending order, and the property is read back by name, else by command id), held at each value's string form. Such a read carries `"no_default": true`: unreported, the setting reads None, never its `default`. It stays `null` when several parameters decide the value (in either order, or together), when a bool does not read as a boolean for every value held (`"2"` too), or when an open kind (`string`, `other`) does not read a multi-digit number and a JSON object back unchanged; an `other` is also read as a number when each integer text reads back as that integer, the JSON object does not read as another structure, no other property reads its parameter and its own write, if any, stores the number as is (a property that reads one field of a JSON value stays `null`; reading such fields is not described). An enum whose getProperty does not return the written value, but whose write stores every value as its own parameter value (no failed conversion such as `NaN`), is read by the inverse of the write unless a per-view read decodes it: the value read is the one the client wrote. The eufy app's own display of the watermark setting (T8414, T8440, T8442) differs from it |
 | `contexts` | What other contexts change (below); absent when every context sees the base entry |
 | `labels` | `{"<value>": "<title>"}` from the app's titles, else the cleaned TD description. The app's option titles of `working_mode_value`: `Standard` (EU), `Performance (beta)` (US) |
 | `section` | Always present: the UI section id, one of `devices/sections.py`'s `SETTING_SECTIONS`. Assigned by `scripts/gen_models_sections.py` from the app page the setting lives on, else the station rules (station models), else the identifier rules, else `other`; a variant has its primary's. Every context has the same section |
+| `role` | Always present: what the setting is to the user, from where the eufy app shows it; assigned by `scripts/gen_models_roles.py`, the first rule that applies deciding. `setting`: the handler has a write (`rw` in some context); or the thing description declares the property writable and the app does not list it as a status it only reads (the app's control, which the library cannot write: `access` `ro`). `diagnostic`: read from, or filled by the handler from, a parameter whose value the library already reports (`devices/param_info.py` `STATE_PARAM_INFO`: battery, online status, a station's own status, power source, signal, storage, counters, active mode; the parameter is the one the read uses or, for a setting without a read, the one parameter the handler fills it from), so a consumer has the value as a device field (a camera's `charging_status` is `diagnostic`: it is filled from the power source). `status`: read-only and shown by the app (`shown` present). `diagnostic`: read-only and shown nowhere (capability data such as `device_ability_data`, schedules and other configuration values). Every context has the same role |
+| `shown` | Where the eufy app shows the setting, whatever its `role`; assigned by `scripts/gen_models_roles.py`. `card`: the app's device card or home page reads it (an entry sensor's door state, tamper and low-battery flag, a camera's battery and charging state), even when a settings page reads it too. `page`: a settings page reads it, the model's layout places it on a page, or the app lists it as a status it only reads. Absent: the app shows it nowhere. A `<base>__v<n>` variant also takes its base's place. Every context has the same value |
 | `group`, `order` | Block and position on the app's settings page, where the app's layout names them. Always present together; they order settings within a section |
 | `page` | The app page the setting lives on; it decides `section` where the page holds one kind of setting |
 | `applies_when` | `[<enum setting>, <value>]`: the app shows the setting only while that setting has that value |
@@ -50,7 +52,7 @@ are 1-space-indented JSON with a trailing newline, and a re-run gives the same b
 | `variants` | On a primary only: the `__v` properties the app may read in its place, with their read conditions (see *Variants*); absent when it has none with read conditions |
 
 An `rw` setting has exactly one of `write` and `write_table`. An `ro` setting has no
-write key and `read: null`, except a status the app only reads, which keeps its read. A `flags` setting and a `bit` setting read the raw mask
+write key; it is readable (`read` not null, with `no_default`) when one parameter fills it as above. A `flags` setting and a `bit` setting read the raw mask
 (`read.map` null).
 
 ### Contexts
@@ -96,7 +98,7 @@ condition list passes when any group passes, a group when all its conditions pas
 | `sdk_version` | the app's thing-SDK version | as above |
 | `device_sn`, `parent_sn` | the device's / its parent's serial | the value is a pattern, whatever the qualifier |
 | `user_country` | the country the account logs in with | pattern |
-| `associated_field` | the property `prop`: device parameter `param` read through `map` (absent: as reported), `default` when the device reports no such parameter; no `param` when the generator found no parameter the handler reports it from as is (read by name, else by command id) and its own write, if any, stores as is; no `prop`: `""` | `=`, `!=`, text order for `<`, `<=`, `>`, `>=`; `RE` as a pattern |
+| `associated_field` | the property `prop`: device parameter `param` read through `map` (absent: as reported), `default` when the device reports no such parameter; no `param` when the generator found no parameter the handler reports it from as is (read by name, else by command id; the property's own `read` when it has one) and its own write, if any, stores as is; no `prop`: `""` | `=`, `!=`, text order for `<`, `<=`, `>`, `>=`; `RE` as a pattern |
 | `parent_associated_field` | the parent's property `prop`; passes when the parent is not listed | not evaluated otherwise (unknown) |
 
 A pattern passes on an empty pattern or value and on a match anywhere (an inline flag
@@ -256,6 +258,8 @@ product code and turns each entry into a `Setting`:
 | `labels` | `labels`, keyed by the public value; `label(value)` looks one up |
 | `writable` | `access` is `rw` and the library sends the write (below) |
 | `readable` | `read` is not null |
+| `role` (`SettingRole`) | `role`: `SETTING`, `STATUS` or `DIAGNOSTIC`; a setting listed from a thing description alone, without a file, is `DIAGNOSTIC`, a mode-table setting a `SETTING` |
+| `shown` (`SettingShown` or None) | `shown`: `CARD`, `PAGE`, or None when absent; None for a setting listed from a thing description alone and for a mode-table setting |
 | `group`, `order`, `page`, `applies_when` | the same keys; `applies_when` as a `(key, value)` tuple |
 | `note` | `note`, plus the reason when the library refuses the write |
 | `advanced` | `advanced` (False when absent) |
@@ -317,7 +321,7 @@ is written, every codec must render back each swept recipe, and every row of
 `tests/fixtures/models_v1_reference.json` must render to its recorded `cmd`/`subCmd`/`params`.
 A model that fails is not written, and the run exits 1; Node failing a job stops the run
 with exit 2. `--check` exits 1 on any byte difference and 2 when Node, the cache, the
-labels, the layout or the title data are missing.
+labels, the layout, the title or the shown-property data are missing.
 Run it on the full corpus after changing the generator.
 
 Tests that need only committed files check the schema of all 159 files and the v1

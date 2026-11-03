@@ -8,26 +8,37 @@
    "kind": "other",
    "note": "no handler write path",
    "read": null,
-   "section": "detection"
+   "role": "setting",
+   "section": "detection",
+   "shown": "card"
   },
   "battery_value": {
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "power"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1101
+   },
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "charging_status": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "power"
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "cloud_storage_support_trail": {
    "access": "ro",
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "storage"
   },
   "detection_type_set": {
@@ -40,7 +51,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "values": [
     5,
     6
@@ -81,7 +94,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "detection",
+   "shown": "card",
    "values": [
     0,
     1,
@@ -95,13 +110,19 @@
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_charging_mode": {
    "access": "ro",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "power"
   },
   "device_is_battery_device": {
@@ -109,33 +130,46 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "page"
   },
   "device_is_online": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_model": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_name": {
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1217
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "device_serial_number": {
    "access": "ro",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_status": {
@@ -143,7 +177,9 @@
    "default": "1",
    "kind": "other",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_storage_type": {
    "access": "ro",
@@ -153,7 +189,9 @@
     "1": "Cloud"
    },
    "read": null,
+   "role": "status",
    "section": "storage",
+   "shown": "page",
    "values": [
     0,
     1
@@ -164,35 +202,48 @@
    "default": "2",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "device_wifi_name": {
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "network"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6200
+   },
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
@@ -200,49 +251,100 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "ip_address": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_support_ble": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "mac_address": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "montion_detection_ui_show_type": {
    "access": "ro",
    "default": "{\"HB3+AI\": 1}",
    "kind": "string",
    "read": null,
-   "section": "detection"
+   "role": "status",
+   "section": "detection",
+   "shown": "page"
   },
   "motion_detection_status": {
    "access": "ro",
+   "contexts": [
+    {
+     "entry": {
+      "read": null
+     },
+     "names": [
+      "HB1",
+      "HB2",
+      "HB3",
+      "HB4",
+      "M8020",
+      "M8021",
+      "M8022",
+      "M8023",
+      "M8024",
+      "M8025",
+      "NVR",
+      "T7000",
+      "T9000"
+     ]
+    }
+   ],
    "default": true,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "detection"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 6040
+   },
+   "role": "setting",
+   "section": "detection",
+   "shown": "card"
   },
   "motion_stop_end_early": {
    "access": "ro",
@@ -255,6 +357,7 @@
    "note": "no handler write path",
    "page": "CustomizeRecording",
    "read": null,
+   "role": "setting",
    "section": "recording"
   },
   "nightvision_type": {
@@ -263,7 +366,9 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
-   "section": "picture"
+   "role": "setting",
+   "section": "picture",
+   "shown": "page"
   },
   "notification_type": {
    "access": "ro",
@@ -276,7 +381,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -295,7 +402,9 @@
    "note": "no handler write path",
    "page": "MotionDetection",
    "read": null,
+   "role": "setting",
    "section": "power",
+   "shown": "page",
    "values": [
     0,
     1,
@@ -309,7 +418,9 @@
     "default:0": "default:0"
    },
    "read": null,
+   "role": "diagnostic",
    "section": "power",
+   "shown": "card",
    "values": [
     "default:0"
    ]
@@ -319,6 +430,7 @@
    "default": "8",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_calibrate_ui_show_type": {
@@ -326,6 +438,7 @@
    "default": "1",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "smart_lock_night_vision_optimization": {
@@ -334,6 +447,7 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "picture"
   },
   "smart_lock_onoff_status": {
@@ -341,7 +455,9 @@
    "kind": "string",
    "note": "no handler write path",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "time_format_set": {
    "access": "ro",
@@ -353,7 +469,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -372,7 +490,9 @@
    "note": "no handler write path",
    "page": "CustomizeRecording",
    "read": null,
+   "role": "setting",
    "section": "recording",
+   "shown": "page",
    "step": 1
   },
   "watermark_set": {
@@ -381,7 +501,9 @@
    "kind": "bool",
    "note": "no handler write path",
    "read": null,
-   "section": "picture"
+   "role": "setting",
+   "section": "picture",
+   "shown": "page"
   }
  },
  "source": {

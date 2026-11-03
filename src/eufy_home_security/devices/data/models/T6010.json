@@ -7,7 +7,9 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_cleaning_switch": {
    "access": "ro",
@@ -15,15 +17,23 @@
    "kind": "bool",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_custody_time": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61410
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_disinfection_switch": {
    "access": "ro",
@@ -31,15 +41,23 @@
    "kind": "bool",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_disinfection_time": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61407
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_dry_switch": {
    "access": "ro",
@@ -47,15 +65,23 @@
    "kind": "bool",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_dry_time": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61409
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_existing_filter_screen": {
    "access": "ro",
@@ -63,7 +89,9 @@
    "kind": "bool",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_fault_status": {
    "access": "ro",
@@ -71,15 +99,23 @@
    "kind": "string",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_filter_detection_status": {
    "access": "ro",
    "default": "1",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "detection"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61421
+   },
+   "role": "status",
+   "section": "detection",
+   "shown": "page"
   },
   "device_filter_element_status": {
    "access": "ro",
@@ -90,7 +126,12 @@
     "1": "Not present",
     "2": "Illegal"
    },
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61416
+   },
+   "role": "diagnostic",
    "section": "other",
    "values": [
     0,
@@ -104,7 +145,9 @@
    "kind": "other",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_filter_element_used_count": {
    "access": "ro",
@@ -112,12 +155,15 @@
    "kind": "other",
    "page": "BottleWasherHomeScreen",
    "read": null,
-   "section": "other"
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_filter_last_time": {
    "access": "ro",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "other"
   },
   "device_is_online": {
@@ -125,13 +171,17 @@
    "default": true,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_model": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_mute_switch": {
    "access": "ro",
@@ -140,44 +190,80 @@
    "note": "no handler write path",
    "page": "BottleWasherSettingScreen",
    "read": null,
-   "section": "audio"
+   "role": "setting",
+   "section": "audio",
+   "shown": "page"
   },
   "device_name": {
    "access": "ro",
    "kind": "string",
    "note": "no handler write path",
    "read": null,
-   "section": "system"
+   "role": "setting",
+   "section": "system",
+   "shown": "card"
   },
   "device_notification_switch": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "notifications"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 61415
+   },
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "device_running_status": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61413
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_silent_ota_switch": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "note": "no handler write path",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 6287
+   },
+   "role": "setting",
+   "section": "system",
+   "shown": "page"
   },
   "device_status": {
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1131
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "device_storage_switch": {
    "access": "ro",
@@ -186,7 +272,9 @@
    "note": "no handler write path",
    "page": "BottleWasherSettingScreen",
    "read": null,
-   "section": "storage"
+   "role": "setting",
+   "section": "storage",
+   "shown": "page"
   },
   "device_temperature_format_set": {
    "access": "ro",
@@ -197,7 +285,9 @@
    },
    "note": "no handler write path",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "page",
    "values": [
     0,
     1
@@ -208,74 +298,118 @@
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61411
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_wash_temperature": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61412
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_wash_total_time": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61414
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_wifi_name": {
    "access": "ro",
    "default": "0",
    "kind": "string",
-   "read": null,
-   "section": "network"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 6200
+   },
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength": {
    "access": "ro",
    "default": "-55",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "diagnostic",
+   "section": "network",
+   "shown": "page"
   },
   "device_wifi_signal_strength_level": {
    "access": "ro",
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "device_work_mode": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61405
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "device_work_status": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
    "page": "BottleWasherHomeScreen",
-   "read": null,
-   "section": "other"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 61403
+   },
+   "role": "status",
+   "section": "other",
+   "shown": "page"
   },
   "firmware_main_version": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version": {
    "access": "ro",
@@ -283,7 +417,9 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "firmware_sub_version_time": {
    "access": "ro",
@@ -291,13 +427,16 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "hide_share_device_feature": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "hide_share_your_thoughts": {
@@ -305,26 +444,32 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "ip_address": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": "0",
    "kind": "other",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "is_support_ble": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "is_support_mqtt": {
@@ -332,6 +477,7 @@
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "is_support_silent_ota_switch": {
@@ -339,19 +485,23 @@
    "default": false,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   },
   "mac_address": {
    "access": "ro",
    "kind": "string",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "page"
   },
   "sdk_model_config": {
    "access": "ro",
    "default": "{\"ble\":{\"uuid\":{\"write\":\"8c850002-0302-41c5-b46e-cf057c562025\",\"read\":\"\",\"service\":\"8c850001-0302-41c5-b46e-cf057c562025\",\"notify\":\"8c850003-0302-41c5-b46e-cf057c562025\"},\"bleOnline\":true,\"syncHeartBeat\":true}}",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "system"
   }
  },

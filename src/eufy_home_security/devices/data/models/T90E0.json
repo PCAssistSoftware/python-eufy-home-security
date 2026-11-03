@@ -13,7 +13,9 @@
     "map": null,
     "param": 1508
    },
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "step": 1,
    "write": {
     "cmd": 1350,
@@ -34,20 +36,32 @@
    "default": "{\"trigger\":[6,7],\"action\":[]}",
    "kind": "string",
    "read": null,
+   "role": "diagnostic",
    "section": "modes"
   },
   "battery_value": {
    "access": "ro",
    "default": "100",
    "kind": "string",
-   "read": null,
-   "section": "power"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1101
+   },
+   "role": "diagnostic",
+   "section": "power",
+   "shown": "card"
   },
   "device_ability_data": {
    "access": "ro",
    "default": " 0",
    "kind": "other",
-   "read": null,
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1103
+   },
+   "role": "diagnostic",
    "section": "system"
   },
   "device_alarm_sound_type": {
@@ -72,7 +86,9 @@
     },
     "param": 1507
    },
+   "role": "setting",
    "section": "alarm",
+   "shown": "page",
    "values": [
     4,
     3,
@@ -100,14 +116,18 @@
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "device_model": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "device_name": {
    "access": "rw",
@@ -115,7 +135,9 @@
    "kind": "string",
    "note": "round trip does not return the written value",
    "read": null,
+   "role": "setting",
    "section": "system",
+   "shown": "card",
    "write": {
     "cmd": 1217,
     "params": {
@@ -134,14 +156,21 @@
    "access": "ro",
    "default": "1",
    "kind": "other",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": null,
+    "no_default": true,
+    "param": 1131
+   },
+   "role": "diagnostic",
+   "section": "system",
+   "shown": "card"
   },
   "device_to_hb_connect_type": {
    "access": "ro",
    "default": "0",
    "kind": "other",
    "read": null,
+   "role": "diagnostic",
    "section": "network"
   },
   "device_wifi_signal_strength_level": {
@@ -149,14 +178,18 @@
    "default": "4",
    "kind": "other",
    "read": null,
-   "section": "network"
+   "role": "status",
+   "section": "network",
+   "shown": "card"
   },
   "firmware_main_version": {
    "access": "ro",
    "default": "0",
    "kind": "string",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "firmware_main_version_time": {
    "access": "ro",
@@ -164,33 +197,58 @@
    "kind": "string",
    "page": "AboutDevice",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "is_device_upgrade": {
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1134
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "notification_jump_to_mode_page": {
    "access": "ro",
    "default": true,
    "kind": "bool",
    "read": null,
+   "role": "diagnostic",
    "section": "notifications"
   },
   "sensor_disassemble_status": {
    "access": "ro",
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 61015
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "sensor_door_bypass_status": {
    "access": "ro",
    "kind": "bool",
    "read": null,
-   "section": "system"
+   "role": "status",
+   "section": "system",
+   "shown": "page"
   },
   "sensor_door_daily_check_status_config": {
    "access": "ro",
@@ -198,7 +256,9 @@
    "note": "handler ignores the value",
    "page": "OpenStatusAlert",
    "read": null,
-   "section": "notifications"
+   "role": "setting",
+   "section": "notifications",
+   "shown": "page"
   },
   "sensor_door_open_status_alert_config": {
    "access": "ro",
@@ -213,7 +273,9 @@
    "note": "handler ignores the value",
    "page": "OpenStatusAlert",
    "read": null,
+   "role": "setting",
    "section": "notifications",
+   "shown": "page",
    "values": [
     5,
     10,
@@ -226,15 +288,27 @@
    "access": "ro",
    "default": false,
    "kind": "bool",
-   "read": null,
-   "section": "system"
+   "read": {
+    "map": {
+     "": false,
+     "0": false,
+     "1": true
+    },
+    "no_default": true,
+    "param": 1550
+   },
+   "role": "status",
+   "section": "system",
+   "shown": "card"
   },
   "sensor_is_low_power": {
    "access": "ro",
    "default": false,
    "kind": "bool",
    "read": null,
-   "section": "power"
+   "role": "status",
+   "section": "power",
+   "shown": "card"
   }
  },
  "source": {
