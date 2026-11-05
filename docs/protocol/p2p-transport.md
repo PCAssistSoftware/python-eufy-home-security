@@ -203,6 +203,19 @@ Both are framed by the magic `ba ab ba ab` **[verified on captures]**:
 - Send `ALIVE` about every 0.7 s and answer every station `ALIVE` with `ALIVE_ACK`
   **[verified]**. The library declares the link lost after 15 s with no datagram
   (its own choice).
+- A HomeBase 3 ends a session with `CLOSE` when the client sends no `ALIVE` for 5 to
+  7 s; an idle session that keeps sending `ALIVE` stays open, and a client that leaves
+  the station's `ALIVE` and DRW unanswered for 25 s while it keeps sending `ALIVE` is
+  not dropped **[observed: HomeBase 3, one sample per hold length]**. The library sends
+  `ALIVE` from a thread of its own on a duplicate of the session's socket, so a host that
+  holds the event loop (a busy Home Assistant start) does not lose the session. Reading,
+  `ALIVE_ACK` and DRW acknowledgements stay on the event loop; the station retransmits
+  what the hold left unacknowledged. The thread stops with the session, or after 60 s
+  without a keepalive check from the event loop (a loop that is gone or stuck does not
+  keep the station's session slot); the loop's next check restarts it. A keepalive check that ends 2 s or more late logs
+  `the event loop was held` at DEBUG and judges the link on the next check, after the
+  datagrams queued during the hold are read; a check right after a deferred one always
+  judges.
 - **The station answers ALIVE whether or not the encrypted session above still
   works** **[verified]**. Traffic at this layer proves the UDP path, never the
   session. Use an application-level probe ([events.md](events.md)).
