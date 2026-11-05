@@ -26,6 +26,7 @@ from eufy_home_security.p2p.pppp import (
     MsgType,
     decode_packet,
     encode_drw_ack,
+    encode_lookup,
     encode_packet,
 )
 from eufy_home_security.p2p.transport import (
@@ -604,3 +605,154 @@ async def test_a_socket_that_cannot_be_duplicated_fails_the_connect(
     assert isinstance(caught.value.__cause__, OSError)
     assert not transport.is_open
     assert not _alive_threads()
+
+
+def test_no_socket_for_the_route_lookup_falls_back_to_any_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_socket(*_args: object) -> socket.socket:
+        raise OSError(errno.EMFILE, "too many open files")
+
+    monkeypatch.setattr(socket, "socket", no_socket)
+    assert transport_module._local_ip_towards("127.0.0.1") == "0.0.0.0"  # noqa: S104
+
+
+async def test_a_wake_cancelled_while_resolving_closes_the_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolving = asyncio.Event()
+
+    async def hang(_host: str) -> str:
+        resolving.set()
+        await asyncio.Event().wait()
+        return _host
+
+    monkeypatch.setattr(transport_module, "_resolve", hang)
+    transport = make_transport()
+    task = asyncio.create_task(
+        transport.connect(
+            "127.0.0.1",
+            port=59999,
+            expected_did=Did.parse(SYNTHETIC.did),
+            wake=Wake(servers=("rendezvous.example",), dsk="x" * 8),
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            await resolving.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert transport._transport is not None
+        assert transport._transport.is_closing()
+    finally:
+        transport.close()
+
+
+async def test_a_server_name_that_does_not_resolve_is_never_sent_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A name reaching a socket call would be resolved on the event loop."""
+    addresses = {"10.0.0.1": "10.0.0.1", "rendezvous.example": None, "alias.example": "10.0.0.1"}
+
+    async def resolve(host: str) -> str | None:
+        return addresses[host]
+
+    looked_up: list[str] = []
+
+    def route_to(host: str) -> str:
+        looked_up.append(host)
+        return "192.0.2.10"
+
+    monkeypatch.setattr(transport_module, "_resolve", resolve)
+    monkeypatch.setattr(transport_module, "_local_ip_towards", route_to)
+    transport = make_transport()
+    sent: list[tuple[int, tuple[str, int]]] = []
+
+    def record(packet: bytes, addr: tuple[str, int]) -> None:
+        sent.append((decode_packet(packet)[0], addr))
+
+    transport._sendto = record  # type: ignore[method-assign]
+    try:
+        with pytest.raises(StationUnreachableError):
+            await transport.connect(
+                "127.0.0.1",
+                port=59999,
+                expected_did=Did.parse(SYNTHETIC.did),
+                timeout=0.3,
+                wake=Wake(servers=("rendezvous.example", "10.0.0.1", "alias.example"), dsk="x" * 8),
+            )
+    finally:
+        transport.close()
+    assert looked_up == ["10.0.0.1"]
+    to_servers = [(msg, addr) for msg, addr in sent if addr[1] == RENDEZVOUS_PORT]
+    hellos = [addr for msg, addr in to_servers if msg == MsgType.HELLO]
+    assert hellos == [("10.0.0.1", RENDEZVOUS_PORT)]  # one per address, not per name
+    assert {addr for msg, addr in to_servers if msg == MsgType.LOOKUP} == {
+        ("10.0.0.1", RENDEZVOUS_PORT)
+    }
+
+
+async def test_no_server_resolves_and_the_lookup_names_any_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def resolve(_host: str) -> str | None:
+        return None
+
+    looked_up: list[str] = []
+
+    def route_to(host: str) -> str:
+        looked_up.append(host)
+        return "192.0.2.10"
+
+    monkeypatch.setattr(transport_module, "_resolve", resolve)
+    monkeypatch.setattr(transport_module, "_local_ip_towards", route_to)
+    transport = make_transport()
+    payloads: list[bytes] = []
+
+    def record(packet: bytes, addr: tuple[str, int]) -> None:
+        if addr[1] == RENDEZVOUS_PORT:
+            payloads.append(packet)
+
+    transport._sendto = record  # type: ignore[method-assign]
+    try:
+        lookup, servers = await transport._prepare_wake(
+            Wake(servers=("rendezvous.example",), dsk="x" * 8), Did.parse(SYNTHETIC.did)
+        )
+    finally:
+        transport.close()
+    assert (servers, payloads, looked_up) == ((), [], [])
+    did = Did.parse(SYNTHETIC.did)
+    any_address = encode_lookup(did.to_struct(), transport_module.ANY_ADDRESS, 0, "x" * 8)
+    assert lookup == encode_packet(MsgType.LOOKUP, any_address)
+
+
+async def test_resolve_gives_none_for_a_name_that_does_not_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail(*_args: object, **_kwargs: object) -> list[object]:
+        raise socket.gaierror(socket.EAI_NONAME, "no such name")
+
+    async def nothing(*_args: object, **_kwargs: object) -> list[object]:
+        return []
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "getaddrinfo", fail)
+    assert await transport_module._resolve("rendezvous.example") is None
+    monkeypatch.setattr(loop, "getaddrinfo", nothing)
+    assert await transport_module._resolve("rendezvous.example") is None
+    assert await transport_module._resolve("10.0.0.1") == "10.0.0.1"
+    assert await transport_module._resolve("::1") is None  # the LOOKUP and socket are IPv4
+
+
+async def test_a_dsk_that_is_not_ascii_fails_the_connect_typed() -> None:
+    transport = make_transport()
+    with pytest.raises(ProtocolError, match="not ASCII"):
+        await transport.connect(
+            "127.0.0.1",
+            port=59999,
+            expected_did=Did.parse(SYNTHETIC.did),
+            wake=Wake(servers=("10.0.0.1",), dsk="ä" * 8),
+        )
+    assert transport._transport is not None
+    assert transport._transport.is_closing()
